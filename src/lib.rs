@@ -2,5 +2,6 @@
 //!
 //! See `PROTOCOL.md` at the repository root for the full protocol specification.
 
+pub mod ble;
 pub mod crypto;
 pub mod protocol;
