@@ -19,11 +19,13 @@
 //! On both platforms, once paired, subsequent connections reuse the stored
 //! bond and no PIN dialog appears.
 
+use std::collections::HashMap;
 use std::time::Duration;
 
 use btleplug::api::{Central, Characteristic, Manager as _, Peripheral as _, ScanFilter};
 use btleplug::platform::{Manager, Peripheral};
 use tokio::time::{sleep, timeout};
+use uuid::Uuid;
 
 use crate::crypto;
 use crate::protocol;
@@ -34,24 +36,19 @@ pub enum Error {
     NoAdapter,
     #[error("bike not found within {0:?}")]
     ScanTimeout(Duration),
-    #[error("bike service not found after discovery")]
-    ServiceNotFound,
+    #[error("no Stark services found after discovery")]
+    NoServicesFound,
     #[error("bluetooth error: {0}")]
     Ble(#[from] btleplug::Error),
 }
 
-/// A live connection to a Stark Varg with resolved characteristics.
+/// A live connection to a Stark Varg with all discovered characteristics.
 pub struct BikeConnection {
     peripheral: Peripheral,
     vin: String,
     pin: String,
-    pub security: Option<Characteristic>,
-    pub bike_data: Option<Characteristic>,
-    pub bike_data_2: Option<Characteristic>,
-    pub live_data: Option<Characteristic>,
-    pub command: Option<Characteristic>,
-    pub vcu_data: Option<Characteristic>,
-    pub battery_level: Option<Characteristic>,
+    /// All discovered characteristics, keyed by UUID.
+    chars: HashMap<Uuid, Characteristic>,
 }
 
 impl BikeConnection {
@@ -61,10 +58,6 @@ impl BikeConnection {
     }
 
     /// The 6-digit pairing PIN for this bike.
-    ///
-    /// On macOS, display this to the user before the system pairing dialog
-    /// appears. On Linux, supply [`pin_as_passkey`](Self::pin_as_passkey)
-    /// to the BlueZ agent's `RequestPasskey` handler.
     pub fn pin(&self) -> &str {
         &self.pin
     }
@@ -74,9 +67,27 @@ impl BikeConnection {
         crypto::pin_to_passkey(&self.pin)
     }
 
-    /// The underlying btleplug peripheral, for operations not wrapped here.
+    /// The underlying btleplug peripheral.
     pub fn peripheral(&self) -> &Peripheral {
         &self.peripheral
+    }
+
+    /// Look up a characteristic by UUID. Returns `None` if the bike
+    /// doesn't expose it (varies by firmware/hardware).
+    pub fn characteristic(&self, uuid: Uuid) -> Option<&Characteristic> {
+        self.chars.get(&uuid)
+    }
+
+    /// All discovered characteristics as a map.
+    pub fn characteristics(&self) -> &HashMap<Uuid, Characteristic> {
+        &self.chars
+    }
+
+    /// All discovered characteristic UUIDs, sorted for display.
+    pub fn characteristic_uuids(&self) -> Vec<Uuid> {
+        let mut uuids: Vec<Uuid> = self.chars.keys().copied().collect();
+        uuids.sort();
+        uuids
     }
 
     /// Disconnect from the bike.
@@ -86,22 +97,8 @@ impl BikeConnection {
     }
 }
 
-/// Scan for a Stark Varg, connect, discover services, and return a
-/// [`BikeConnection`] with all known characteristics resolved.
-///
-/// The `vin` is used both to match the bike's advertised name and to
-/// derive the pairing PIN. The `sold_on` date is used for PIN derivation
-/// (pass `"19700101"` for the default/epoch fallback).
-///
-/// The bike must be keyed on (not just charging) for the GATT server to
-/// be active.
-///
-/// **On macOS**, the first connection to an unpaired bike will trigger a
-/// system PIN dialog. Call [`BikeConnection::pin`] on the returned value
-/// to get the PIN the user needs to enter — but note the dialog may appear
-/// *during* this call (specifically during service discovery). For a better
-/// UX, compute the PIN beforehand with [`crate::crypto::generate_pin`] and
-/// display it before calling this function.
+/// Scan for a Stark Varg, connect, discover ALL services and
+/// characteristics, and return a [`BikeConnection`].
 pub async fn scan_and_connect(
     vin: &str,
     sold_on: &str,
@@ -129,27 +126,20 @@ pub async fn scan_and_connect(
     peripheral.connect().await?;
     peripheral.discover_services().await?;
 
-    let chars = peripheral.characteristics();
-    let find = |uuid| chars.iter().find(|c| c.uuid == uuid).cloned();
+    // Collect ALL characteristics from ALL services.
+    let all_chars = peripheral.characteristics();
+    let chars: HashMap<Uuid, Characteristic> = all_chars.into_iter().map(|c| (c.uuid, c)).collect();
 
-    let conn = BikeConnection {
-        vin: vin.to_string(),
-        pin,
-        security: find(protocol::UUID_SECURITY),
-        bike_data: find(protocol::UUID_BIKE_DATA),
-        bike_data_2: find(protocol::UUID_BIKE_DATA_2),
-        live_data: find(protocol::UUID_LIVE_DATA),
-        command: find(protocol::UUID_COMMAND),
-        vcu_data: find(protocol::UUID_VCU_DATA),
-        battery_level: find(protocol::UUID_BATTERY_LEVEL),
-        peripheral,
-    };
-
-    if conn.security.is_none() && conn.live_data.is_none() {
-        return Err(Error::ServiceNotFound);
+    if chars.is_empty() {
+        return Err(Error::NoServicesFound);
     }
 
-    Ok(conn)
+    Ok(BikeConnection {
+        vin: vin.to_string(),
+        pin,
+        chars,
+        peripheral,
+    })
 }
 
 async fn find_bike(
@@ -159,7 +149,7 @@ async fn find_bike(
     loop {
         for p in adapter.peripherals().await? {
             if let Some(props) = p.properties().await? {
-                let has_service = props.services.contains(&protocol::UUID_BIKE_SERVICE);
+                let has_service = props.services.contains(&protocol::UUID_SVC_BIKE);
                 let name = props.local_name.as_deref().unwrap_or("");
 
                 if has_service || name.contains(target_vin) {

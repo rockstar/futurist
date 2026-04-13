@@ -12,7 +12,7 @@ Validated against a Gen 1 Stark Varg.
 
 - [Overview](#overview)
 - [BLE Advertising](#ble-advertising)
-- [GATT Service and Characteristics](#gatt-service-and-characteristics)
+- [GATT Services](#gatt-services)
 - [Pairing](#pairing)
   - [PIN Derivation Algorithm](#pin-derivation-algorithm)
   - [Pairing Procedure](#pairing-procedure)
@@ -21,9 +21,9 @@ Validated against a Gen 1 Stark Varg.
   - [When It Applies](#when-it-applies)
   - [Intermediate Key Derivation](#intermediate-key-derivation)
   - [Challenge-Response Handshake](#challenge-response-handshake)
-- [Characteristic Map](#characteristic-map)
-- [Telemetry (Not Yet Decoded)](#telemetry-not-yet-decoded)
-- [Commands (Not Yet Decoded)](#commands-not-yet-decoded)
+- [Decoded Data Types](#decoded-data-types)
+- [VCU Configuration](#vcu-configuration)
+- [TLV Format](#tlv-format)
 - [Firmware Variants](#firmware-variants)
 - [Wi-Fi Firmware Flashing](#wi-fi-firmware-flashing)
 
@@ -42,8 +42,8 @@ Normal operation uses BLE exclusively. The connection flow is:
 3. **Optionally authenticate** at the application layer via a challenge-response
    handshake on the security characteristic (firmware-dependent; some versions
    skip this).
-4. **Read/subscribe** to telemetry characteristics for live data.
-5. **Write** to the command characteristic to change settings.
+4. **Subscribe** to notify-capable characteristics across all services.
+5. **Read/write** characteristics for telemetry and configuration.
 
 ---
 
@@ -66,44 +66,117 @@ on the order of minutes.
 
 ---
 
-## GATT Service and Characteristics
+## GATT Services
 
-All custom characteristics share a common UUID base derived from "StarK Future"
-in ASCII:
+All custom UUIDs share a common base derived from "StarK Future" in ASCII:
 
 ```
 Base: XXXXXXXX-5374-6172-4b20-467574757265
               S t a r K   F u t u r e
 ```
 
-### Primary Service
+The bike exposes up to seven GATT services. Not all may be present on every
+firmware version. Clients should discover all services dynamically and
+subscribe to every notify-capable characteristic.
 
-```
-UUID: 00001000-5374-6172-4b20-467574757265
-```
+### Service 0x1000 — Bike Data
 
-### Characteristics
+Primary bike state, identity, firmware versions, and authentication.
 
-| UUID | Short Name | Properties | Description |
-|------|-----------|------------|-------------|
-| `00001001-...-467574757265` | Security | Write, Notify | Authentication handshake (see [Application-Layer Authentication](#application-layer-authentication-v2)). On some firmware versions, the V2 handshake is not used and this characteristic is inert after pairing. |
-| `00001002-...-467574757265` | Bike Data | Read, Notify | Primary telemetry frame (18 bytes observed). |
-| `00001003-...-467574757265` | Bike Data 2 | Read, Notify | Secondary telemetry frame (23 bytes observed). |
-| `00001005-...-467574757265` | Live Data | Read, Notify | Large telemetry struct (100 bytes observed). First byte appears to be bike-on status (`0x01` = on). |
-| `00001006-...-467574757265` | Command | Write | Write-only command characteristic for configuration changes (ride mode, settings, etc.). |
-| `00001100-...-467574757265` | VCU Data | Read, Notify | VCU (Vehicle Control Unit) data. May require a command write to `00001006` to populate. |
-| `00002a19-0000-1000-8000-00805f9b34fb` | Battery Level | Read, Notify | Standard BLE Battery Level characteristic. Single byte, 0-100 (percentage). |
+| UUID | Name | Properties | Description |
+|------|------|-----------|-------------|
+| `0x1001` | Security | W, N | Auth handshake (see [V2 Auth](#application-layer-authentication-v2)). |
+| `0x1002` | Status Bits | R, N | 18 bytes — bike state flags. See [Status Bits](#status-bits-0x1002--18-bytes). |
+| `0x1003` | Identity | R, N | 23 bytes — VIN (17 chars) + sold date (6 chars). |
+| `0x1005` | Versions | R, N | 100 bytes — BLE version, firmware versions for all components. |
+| `0x1006` | Command | W | Write-only command channel. |
+| `0x1100` | Extended TLV | R, N | [TLV-encoded](#tlv-format) status updates (fast bits, lock, update available). |
+| `0x1101` | Extended Config | R, N | Extended configuration data. |
 
-**Note:** Characteristics `00001004` and `00001101` may appear on different
-firmware versions or hardware revisions but were not present on the tested
-bike's GATT server.
+### Service 0x2000 — Live Data
 
-### CCCD (Notifications)
+Real-time riding telemetry. Updated at high frequency while the bike is active.
 
-To receive live telemetry updates, write `0x01 0x00` to the Client
-Characteristic Configuration Descriptor (UUID `00002902-0000-1000-8000-00805f9b34fb`)
-on the desired characteristic. This is standard BLE notification enablement
-and is handled automatically by most BLE libraries (`subscribe()` / `notify()`).
+| UUID | Name | Properties | Description |
+|------|------|-----------|-------------|
+| `0x2001` | Speed | R, N | 4 bytes. See [Speed](#speed-0x2001--4-bytes). |
+| `0x2002` | Throttle | R, N | 6 bytes. See [Throttle](#throttle-0x2002--6-bytes). |
+| `0x2003` | IMU | R, N | 12 bytes. See [IMU](#imu-0x2003--12-bytes). |
+| `0x2004` | Maps | R, N | 1 byte — active power mode slot number. |
+| `0x2005` | Totals | R, N | 16 bytes. See [Totals](#totals-0x2005--16-bytes). |
+| `0x2006` | Estimations | R, N | 6 bytes. See [Estimations](#estimations-0x2006--6-bytes). |
+| `0x2007` | Racing | R, N | 9 bytes. See [Racing](#racing-0x2007--9-bytes). |
+| `0x2008` | Config | R, N | Live data configuration. |
+| `0x2100` | Live TLV | R, N | [TLV-encoded](#tlv-format) multiplexed live data. |
+| `0x2101` | Live Ext Config | R, N | Extended live configuration. |
+
+### Service 0x3000 — Docking
+
+Docking station data (for the Stark charging dock).
+
+| UUID | Name | Properties | Description |
+|------|------|-----------|-------------|
+| `0x3001` | Docking Data 1 | R, N | Docking state. |
+| `0x3002` | Docking Data 2 | R, N | Additional docking data. |
+| `0x3100` | Docking TLV | R, N | TLV-encoded docking data. |
+| `0x3101` | Docking Config | R, N | Docking configuration. |
+
+### Service 0x4000 — VCU
+
+Vehicle Control Unit data, versions, and configuration.
+
+| UUID | Name | Properties | Description |
+|------|------|-----------|-------------|
+| `0x4001` | VCU Versions | R, N | VCU firmware version info. |
+| `0x4002` | VCU Info | R, N | VCU status information. |
+| `0x4005` | VCU Config | R, W, N | Read/write bike configuration. See [VCU Configuration](#vcu-configuration). |
+| `0x4100` | VCU TLV | R, N | TLV-encoded VCU data. |
+
+### Service 0x5000 — Charger
+
+Charger status and configuration.
+
+| UUID | Name | Properties | Description |
+|------|------|-----------|-------------|
+| `0x5001` | Charger Data | R, N | Charger state. |
+| `0x5100` | Charger TLV | R, N | TLV-encoded charger data. |
+| `0x5101` | Charger Config | R, N | Charger configuration. |
+
+### Service 0x6000 — Battery
+
+Detailed battery management system data.
+
+| UUID | Name | Properties | Description |
+|------|------|-----------|-------------|
+| `0x6001`–`0x6009` | Battery Data 1–9 | R, N | Nine battery data characteristics (cell voltages, temperatures, BMS signals, etc.). |
+| `0x6100` | Battery TLV | R, N | TLV-encoded battery data. |
+| `0x6101` | Battery Config | R, N | Battery configuration. |
+
+### Service 0x7000 — Inverter
+
+Motor controller (inverter) data.
+
+| UUID | Name | Properties | Description |
+|------|------|-----------|-------------|
+| `0x7001`–`0x7004` | Inverter Data 1–4 | R, N | Inverter telemetry (temperatures, currents, etc.). |
+| `0x7100` | Inverter TLV | R, N | TLV-encoded inverter data. |
+| `0x7101` | Inverter Config | R, N | Inverter configuration. |
+
+### Standard BLE
+
+| UUID | Name | Properties | Description |
+|------|------|-----------|-------------|
+| `0x2a19` | Battery Level | R, N | Standard BLE characteristic. Single byte, 0–100 (percentage). |
+
+### Notifications (CCCD)
+
+To receive live updates, enable notifications by writing `0x01 0x00` to the
+Client Characteristic Configuration Descriptor (UUID `0x2902`) on the desired
+characteristic. This is standard BLE and is handled automatically by most
+libraries (`subscribe()` / `notify()`).
+
+Clients should subscribe to **all** notify-capable characteristics across all
+discovered services.
 
 ---
 
@@ -192,7 +265,7 @@ system.
 ### When It Applies
 
 The V2 auth handshake is **firmware-dependent**. The security characteristic
-(`00001001`) determines which flow is used:
+(`0x1001`) determines which flow is used:
 
 | Security Char Properties | Auth Required | Notes |
 |-------------------------|--------------|-------|
@@ -231,7 +304,7 @@ derivation where 32-bit arithmetic is required.
 
 ### Challenge-Response Handshake
 
-Performed over the security characteristic (`00001001`).
+Performed over the security characteristic (`0x1001`).
 
 **Step 1 — Read nonce:** Client reads the security characteristic. The bike
 returns a 32-byte random nonce.
@@ -275,75 +348,239 @@ MIX_V1 = [0x2fbf, 0x9b94, 0xeca2, 0xf03d, 0x31e9, 0x308f, 0xee5a, 0x5f9e,
 
 ---
 
-## Characteristic Map
+## Decoded Data Types
 
-Detailed byte-level decoding of each characteristic is a work in progress.
+All multi-byte values are **little-endian**.
 
-### 00001005 — Live Data (100 bytes)
+### Status Bits (0x1002 — 18 bytes)
 
-The largest telemetry characteristic. Fields are expected to include:
+| Offset | Type | Field |
+|--------|------|-------|
+| 0–1 | u16 | `misc_bits` |
+| 2–3 | u16 | `indicator_bits` |
+| 4–5 | u16 | `alert_bits` |
+| 6–7 | u16 | `fault_bits` |
+| 8–9 | u16 | `info_bits` |
+| 10 | u8 | `lock_status` |
+| 11–12 | u16 | `lock_time` |
+| 13 | u8 | `update_available` (0 or 1) |
+| 14–17 | u32 | `battery_status` |
 
-- Byte 0: Bike status (`0x01` = on, `0x00` = off)
-- Remaining bytes: TBD (speed, RPM, motor temp, inverter temp, battery SOC,
-  current draw, odometer, etc.)
+**`misc_bits` fields:**
 
-Subscribe to notifications for real-time updates while riding.
+| Bits | Field |
+|------|-------|
+| 0–3 | Walking mode (0–15) |
+| 8–15 | Vibration amplitude |
 
-### 00001002 — Bike Data (18 bytes)
+**`indicator_bits` fields:**
 
-Primary data frame. Likely contains summary/status information.
+| Bit | Field |
+|-----|-------|
+| 0 | Blinker left |
+| 1 | Blinker right |
+| 2 | Beam long (high beam) |
+| 3 | Horn |
+| 4 | Throttle armed |
+| 5 | Drive engaged |
+| 6 | Throttle cable damaged |
+| 8 | Throttle not closed on turning on |
+| 9 | Throttle not closed on engage |
+| 10 | Bike not stopped |
+| 11 | MIL error |
 
-### 00001003 — Bike Data 2 (23 bytes)
+**`info_bits` fields:**
 
-Secondary data frame.
+| Bit | Field |
+|-----|-------|
+| 0 | Charger connected |
+| 1 | Is charging |
+| 2 | Is docked |
+| 4 | Is hibernating (inverted: 0 = hibernating) |
+| 5 | Pump on |
+| 6 | Fan on |
 
-### 00001100 — VCU Data (variable)
+**`fault_bits` fields:**
 
-VCU configuration and status. May return empty until a specific request is
-written to the command characteristic (`00001006`). Request payloads use a
-`(period, targetStructId)` format where both values are 16-bit, selecting what
-data the VCU should report and at what interval.
+| Bit | Field |
+|-----|-------|
+| 0 | General fault |
+| 1 | Battery temperature |
+| 2 | Motor temperature |
+| 3 | Coolant pump |
+| 4 | Cooling fan |
+| 5 | Insulation |
+| 6 | Derating (battery) |
+| 7 | Derating (IGBT) |
 
-### 00001006 — Command (write-only)
+### Identity (0x1003 — 23 bytes)
 
-Accepts command payloads. Used for:
-- Ride mode changes
-- Configuration writes (LED settings, power limits, etc.)
-- Firmware update initiation
+| Offset | Type | Field |
+|--------|------|-------|
+| 0–16 | ASCII | VIN (17 characters) |
+| 17–22 | ASCII | Sold date (6 characters, YYMMDD) |
 
-Command framing and opcodes are not yet decoded.
+### Versions (0x1005 — 100 bytes)
 
-### 00002a19 — Battery Level (1 byte)
+| Offset | Type | Field |
+|--------|------|-------|
+| 0–1 | u16 | BLE version |
+| 2–3 | i16 | Download percent |
+| 4–6 | 3 × u8 | Blob FS version (`[6].[5].[4]`) |
+| 8–10 | 3 × u8 | Blob server version (`[10].[9].[8]`) |
+| 12–99 | 11 × 8 bytes | Component versions (see below) |
 
-Standard BLE Battery Level characteristic. Value is 0-100 (percentage).
+Each component occupies 8 bytes: 3 bytes for the current version, 1 byte
+padding, 3 bytes for the available version, 1 byte padding. Version bytes
+are formatted as `[+2].[+1].[+0]`.
+
+Components in order: VCU PIC, ESP Top, ESP Bottom, Inverter Logic,
+Inverter Gate, BMS Positive, BMS Negative, Map Switch, Light Front,
+Light Rear, Docking.
+
+### Speed (0x2001 — 4 bytes)
+
+| Offset | Type | Field |
+|--------|------|-------|
+| 0–1 | u16 | Speed (raw value / 10 = km/h) |
+| 2–3 | u16 | Motor RPM |
+
+### Throttle (0x2002 — 6 bytes)
+
+| Offset | Type | Field |
+|--------|------|-------|
+| 0–1 | u16 | Throttle position |
+| 2–3 | i16 | Iq feedback (current) |
+| 4–5 | i16 | Id feedback (current) |
+
+### IMU (0x2003 — 12 bytes)
+
+| Offset | Type | Field |
+|--------|------|-------|
+| 0–1 | i16 | Accelerometer X |
+| 2–3 | i16 | Accelerometer Y |
+| 4–5 | i16 | Accelerometer Z |
+| 6–7 | i16 | Gyroscope X |
+| 8–9 | i16 | Gyroscope Y |
+| 10–11 | i16 | Gyroscope Z |
+
+### Totals (0x2005 — 16 bytes)
+
+| Offset | Type | Field |
+|--------|------|-------|
+| 0–3 | u32 | Odometer |
+| 4–7 | u32 | Total watt-hours |
+| 8–11 | u32 | Total airtime (seconds) |
+| 12–15 | u32 | Total ride time (seconds) |
+
+### Estimations (0x2006 — 6 bytes)
+
+| Offset | Type | Field |
+|--------|------|-------|
+| 0–1 | u16 | Estimated range (km) |
+| 2–3 | u16 | Estimated time (minutes) |
+| 4–5 | i16 | Motor power (watts, negative = regen) |
+
+### Racing (0x2007 — 9 bytes)
+
+| Offset | Type | Field |
+|--------|------|-------|
+| 0 | u8 | Racing mode |
+| 1 | u8 | Racing curve |
+| 2–3 | u16 | Throttle multiplier |
+| 4 | u8 | Category |
+| 5–8 | u32 | Expiry timestamp (Unix seconds) |
+
+### Battery Level (0x2a19 — 1 byte)
+
+Standard BLE Battery Level characteristic. Value is 0–100 (percentage).
 
 ---
 
-## Telemetry (Not Yet Decoded)
+## VCU Configuration
 
-The byte-level layout of the telemetry characteristics has not been fully
-mapped. Expected data model fields include:
+Service `0x4000`, characteristic `0x4005`. This is a read/write channel for
+bike configuration. Each packet has a 3-byte header:
 
-- **Live data** — real-time riding data (speed, RPM, temperatures)
-- **BMS signals** — battery management system (cell voltages, SOC, temperatures)
-- **Inverter temperatures** — motor controller temperatures
-- **Totals** — odometer, energy consumed
-- **IMU** — inertial measurement unit (lean angle, acceleration)
-- **Estimations** — range estimates
-- **Component data** — hardware component status
+| Offset | Type | Field |
+|--------|------|-------|
+| 0 | u8 | Read/Write (0 = read request/response, 1 = write) |
+| 1 | u8 | Config type |
+| 2 | u8 | Status |
+| 3+ | varies | Config data (depends on type) |
 
-Cross-referencing with captured telemetry data while the bike is active will
-be needed to produce a complete field map.
+**Config types:**
+
+| Type | Name | Description |
+|------|------|-------------|
+| 0 | Map Config | Power mode settings |
+| 1 | Curves Config | Throttle curve settings |
+| 2 | Racing Config | Racing mode settings |
+| 3 | Misc Config | Miscellaneous settings |
+| 4 | Charger Config | Charging settings |
+| 5 | Lock Bike Config | Lock/security settings |
+| 7 | Totals Config | Odometer/totals settings |
+
+### Map Config (type 0)
+
+The map config defines a power mode slot. To read a map's configuration,
+write a read request to `0x4005`; the bike responds via notification.
+
+**Read request data:** 1 byte — the map slot number.
+
+**Response data (6 bytes):**
+
+| Offset | Type | Field |
+|--------|------|-------|
+| 0 | u8 | Map slot number |
+| 1–2 | i16 | Torque (divide by 1.25 for power percentage) |
+| 3–4 | i16 | Regenerative braking level |
+| 5 | u8 | Throttle curve |
+
+**Write data (7 bytes):**
+
+| Offset | Type | Field |
+|--------|------|-------|
+| 0 | u8 | Map slot number |
+| 1 | u8 | Save flag |
+| 2–3 | i16 | Torque |
+| 4–5 | i16 | Regen |
+| 6 | u8 | Curve |
 
 ---
 
-## Commands (Not Yet Decoded)
+## TLV Format
 
-The command characteristic (`00001006`) accepts write payloads for
-configuration changes. Commands are serialized through a queue to prevent
-write collisions.
+Several characteristics use TLV (Type-Length-Value) encoding for multiplexed
+data. The format is:
 
-The command format (opcode, length, payload structure) has not been decoded yet.
+```
+While data remains:
+    type   = data[offset]        // u8
+    length = data[offset + 1]    // u8
+    value  = data[offset + 2 .. offset + 2 + length]
+    offset += 2 + length
+```
+
+### Extended TLV (0x1100) Type IDs
+
+| Type | Name | Data |
+|------|------|------|
+| 1 | Fast Bits | 8 bytes: misc_bits (u16), indicator_bits (u16), alert_bits (u16), info_bits (u16). Compact status update — same fields as Status Bits bytes 0–7 but with `info_bits` replacing `fault_bits`. |
+| 2 | Lock Status | 3 bytes: lock_status (u8), lock_time (u16). |
+| 3 | Update Available | 1 byte: 0 = no update, 1 = update available. |
+
+### Live TLV (0x2100) Type IDs
+
+| Type | Name | Data |
+|------|------|------|
+| 1 | Speed | 4 bytes (same format as [Speed](#speed-0x2001--4-bytes)). |
+| 2 | Throttle | 6 bytes (same format as [Throttle](#throttle-0x2002--6-bytes)). |
+| 3 | IMU | 12 bytes (same format as [IMU](#imu-0x2003--12-bytes)). |
+| 4 | Maps | 1 byte — active power mode slot. |
+| 5 | Estimations | 6 bytes (same format as [Estimations](#estimations-0x2006--6-bytes)). |
+| 6 | Totals | 16 bytes (same format as [Totals](#totals-0x2005--16-bytes)). |
+| 7 | Racing | 9 bytes (same format as [Racing](#racing-0x2007--9-bytes)). |
 
 ---
 
