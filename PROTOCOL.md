@@ -497,6 +497,176 @@ Standard BLE Battery Level characteristic. Value is 0–100 (percentage).
 
 ---
 
+## Battery Data Types
+
+### Battery Status (0x6001 — 8 bytes)
+
+| Offset | Type | Field |
+|--------|------|-------|
+| 0–3 | u32 | `fault_bits_pos` — positive side fault bits |
+| 4–7 | u32 | `fault_bits_neg` — negative side fault bits |
+
+### Battery Firmware Version (0x6002 — 12 bytes)
+
+| Offset | Type | Field |
+|--------|------|-------|
+| 0–2 | 3 × u8 | Positive BMS firmware version (`[2].[1].[0]`) |
+| 4–6 | 3 × u8 | Negative BMS firmware version (`[6].[5].[4]`) |
+| 8–11 | u32 | Serial number |
+
+### Battery Parameters (0x6003 — 4 bytes)
+
+| Offset | Type | Field |
+|--------|------|-------|
+| 0 | u8 | Cells in series |
+| 1 | u8 | Parallel strings |
+| 2–3 | u16 | Capacity (mAh) |
+
+### Battery SOC (0x6004 — 6 bytes)
+
+| Offset | Type | Field |
+|--------|------|-------|
+| 0–1 | u16 | State of charge |
+| 2–3 | u16 | State of health |
+| 4–5 | u16 | DC bus voltage |
+
+### Battery Temperatures (0x6005 — 27 bytes)
+
+| Offset | Type | Field |
+|--------|------|-------|
+| 0–23 | 12 × u16 | Temperature sensor readings |
+| 24–25 | u16 | Valid sensor mask |
+| 26 | u8 | Number of sensors in use |
+
+### Battery Cells (0x6007 — 200 bytes)
+
+100 cell voltages, each as u16 LE (2 bytes per cell). Sentinel value
+`0xFFFF` indicates an inactive cell.
+
+### Battery Signals (0x6009 — 18 bytes)
+
+| Offset | Type | Field |
+|--------|------|-------|
+| 0–1 | u16 | Positive DC bus |
+| 2–3 | u16 | Positive temperature |
+| 4–5 | u16 | Positive humidity |
+| 6–7 | u16 | Positive control |
+| 8–9 | u16 | Negative DC bus |
+| 10–11 | u16 | Negative temperature |
+| 12–13 | u16 | Negative humidity |
+| 14–15 | u16 | Negative control |
+| 16–17 | i16 | Battery current (signed) |
+
+---
+
+## Inverter Data Types
+
+### Inverter Info (0x7001 — 23 bytes)
+
+| Offset | Type | Field |
+|--------|------|-------|
+| 0–1 | u16 | Fault codes |
+| 2–5 | u32 | Status |
+| 6–7 | u16 | MCC data 1 error count |
+| 8–9 | u16 | MCC data 2 error count |
+| 10–12 | 3 × u8 | Logic firmware version (`[12].[11].[10]`) |
+| 14–16 | 3 × u8 | Gate driver firmware version (`[16].[15].[14]`) |
+| 18 | u8 | Hardware version |
+| 19–22 | u32 | Humidity (divide by 100 for %) |
+
+### Inverter Signals (0x7002 — 14 bytes)
+
+| Offset | Type | Field |
+|--------|------|-------|
+| 0–1 | u16 | DC bus voltage |
+| 2–3 | u16 | Iq reference |
+| 4–5 | u16 | Id reference |
+| 6–7 | i16 | Iq actual (signed) |
+| 8–9 | i16 | Id actual (signed) |
+| 10–11 | u16 | Vq |
+| 12–13 | u16 | Vd |
+
+### Inverter Temperatures (0x7003 — 16 bytes)
+
+Two groups of 8 bytes: motor sensors (0–7) and IGBT sensors (8–15).
+Each group:
+
+| Offset | Type | Field |
+|--------|------|-------|
+| +0/+1 | u16 | Sensor 1 (divide by 10 for °C) |
+| +2/+3 | u16 | Sensor 2 |
+| +4/+5 | u16 | Sensor 3 |
+| +6 | u8 | Valid flags |
+| +7 | u8 | Used flags |
+
+### Inverter PCB (0x7004 — 18 bytes)
+
+| Offset | Type | Field |
+|--------|------|-------|
+| 0–1 | u16 | MCU logic temperature |
+| 2–3 | u16 | MCU gate temperature |
+| 4–5 | u16 | NTC 1 |
+| 6–7 | u16 | NTC 2 |
+| 8–9 | u16 | NTC 3 |
+| 10–11 | u16 | PCB temperature |
+| 12–13 | u16 | PCB humidity (divide by 100 for %) |
+| 14–17 | u32 | Serial number |
+
+---
+
+## Charger Data (0x5001 — 18 bytes)
+
+| Offset | Type | Field |
+|--------|------|-------|
+| 0–1 | u16 | Requested current |
+| 2–3 | u16 | Reported current |
+| 4–5 | u16 | Cell charge voltage |
+| 6–7 | u16 | Max charge current |
+| 8–9 | u16 | Max charge power |
+| 10–11 | u16 | Max charge SOC |
+| 12–13 | u16 | Requested voltage |
+| 14–15 | u16 | Reported voltage (optional) |
+| 16 | u8 | Charger status (optional) |
+| 17 | bool | Charger enabled (optional) |
+
+---
+
+## Docking Data
+
+### Docking Version (0x3001 — 3 bytes)
+
+Firmware version: `[2].[1].[0]`.
+
+### Docking QI Status (0x3002 — 1 byte)
+
+QI wireless charging status code.
+
+---
+
+## VCU Data Types
+
+### VCU Versions (0x4001 — 20 bytes)
+
+| Offset | Type | Field |
+|--------|------|-------|
+| 0–2 | 3 × u8 | PIC VCU version |
+| 4–6 | 3 × u8 | Top ESP VCU version |
+| 8–10 | 3 × u8 | Bottom ESP VCU version |
+| 12–14 | 3 × u8 | FWFS version |
+| 16–19 | u32 | Serial number |
+
+### VCU Info (0x4002 — 10 bytes)
+
+| Offset | Type | Field |
+|--------|------|-------|
+| 0–1 | u16 | Fan current |
+| 2–3 | u16 | Pump current |
+| 4–5 | u16 | Pump OK counter |
+| 6–7 | u16 | Humidity (divide by 100 for %) |
+| 8–9 | u16 | Temperature (divide by 100 for °C) |
+
+---
+
 ## VCU Configuration
 
 Service `0x4000`, characteristic `0x4005`. This is a read/write channel for
@@ -581,6 +751,49 @@ While data remains:
 | 5 | Estimations | 6 bytes (same format as [Estimations](#estimations-0x2006--6-bytes)). |
 | 6 | Totals | 16 bytes (same format as [Totals](#totals-0x2005--16-bytes)). |
 | 7 | Racing | 9 bytes (same format as [Racing](#racing-0x2007--9-bytes)). |
+
+### Docking TLV (0x3100) Type IDs
+
+| Type | Name | Data |
+|------|------|------|
+| 1 | Version | 3 bytes — docking firmware version (same as 0x3001). |
+| 2 | QI Status | 1 byte — QI charging status (same as 0x3002). |
+
+### VCU TLV (0x4100) Type IDs
+
+| Type | Name | Data |
+|------|------|------|
+| 1 | Versions | 20 bytes — VCU firmware versions (same as 0x4001). |
+| 2 | Info | 10 bytes — VCU info (same as 0x4002). |
+
+### Charger TLV (0x5100) Type IDs
+
+| Type | Name | Data |
+|------|------|------|
+| 1 | Charger Data | Up to 18 bytes — all charger fields (same as 0x5001). |
+
+### Battery TLV (0x6100) Type IDs
+
+| Type | Name | Data |
+|------|------|------|
+| 2 | Signals | 18 bytes — BMS signals (same as 0x6009). |
+| 3 | Cells | 200 bytes — cell voltages (same as 0x6007). |
+| 4 | Balancing | ~13 bytes — raw balancing data (same as 0x6008). |
+| 5 | Temperatures | 27 bytes — temperature sensors (same as 0x6005). |
+| 6 | Params | 4 bytes — battery parameters (same as 0x6003). |
+| 7 | Firmware Version | 12 bytes — BMS firmware versions (same as 0x6002). |
+| 8 | SOC | 6 bytes — state of charge/health (same as 0x6004). |
+| 9 | Info | 26 bytes — serial info and manufacturer code. |
+
+### Inverter TLV (0x7100) Type IDs
+
+| Type | Name | Data |
+|------|------|------|
+| 1 | Signals | 14 bytes — inverter signals (same as 0x7002). |
+| 2 | IGBT Temperatures | 8 bytes — IGBT temperature sensors only (half of 0x7003). |
+| 3 | Motor Temperatures | 8 bytes — motor temperature sensors only (half of 0x7003). |
+| 4 | PCB | 18 bytes — PCB data (same as 0x7004). |
+| 5 | Info | ~23 bytes — inverter info (same as 0x7001). |
 
 ---
 

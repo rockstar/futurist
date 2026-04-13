@@ -219,9 +219,228 @@ fn print_decoded(
                 }
             }
         }
+        // Service 0x3000 — Docking
+        protocol::UUID_DOCKING_DATA_1 => {
+            if let Some(ref d) = state.docking_version {
+                println!("{:>8.3}s  {}  version={}", elapsed, name, d.version);
+            }
+        }
+        protocol::UUID_DOCKING_DATA_2 => {
+            if let Some(ref d) = state.docking_qi {
+                println!("{:>8.3}s  {}  qi_status={}", elapsed, name, d.status);
+            }
+        }
+
+        // Service 0x4000 — VCU
+        protocol::UUID_VCU_VERSIONS => {
+            if let Some(ref v) = state.vcu_versions {
+                println!(
+                    "{:>8.3}s  {}  pic={} top={} bottom={} fwfs={} serial={}",
+                    elapsed, name, v.pic_vcu, v.top_vcu, v.bottom_vcu, v.fwfs, v.serial_number,
+                );
+            }
+        }
+        protocol::UUID_VCU_INFO => {
+            if let Some(ref v) = state.vcu_info {
+                println!(
+                    "{:>8.3}s  {}  fan_curr={} pump_curr={} pump_ok={} humidity={} temp={}",
+                    elapsed,
+                    name,
+                    fmt_u16(v.fan_current),
+                    fmt_u16(v.pump_current),
+                    fmt_u16(v.pump_ok_counter),
+                    fmt_u16(v.humidity),
+                    fmt_u16(v.temperature),
+                );
+            }
+        }
+
+        // Service 0x5000 — Charger
+        protocol::UUID_CHARGER_DATA => {
+            if let Some(ref c) = state.charger {
+                println!(
+                    "{:>8.3}s  {}  req_i={} rpt_i={} req_v={} rpt_v={} \
+                     max_i={} max_p={} max_soc={} status={} enabled={}",
+                    elapsed,
+                    name,
+                    fmt_u16(c.req_current),
+                    fmt_u16(c.reported_current),
+                    fmt_u16(c.req_voltage),
+                    fmt_u16(c.reported_voltage),
+                    fmt_u16(c.max_charge_current),
+                    fmt_u16(c.max_charge_power),
+                    fmt_u16(c.max_charge_soc),
+                    c.charger_status,
+                    c.charger_enabled,
+                );
+            }
+        }
+
+        // Service 0x6000 — Battery
+        protocol::UUID_BATT_STATUS => {
+            if let Some(ref b) = state.batt_status {
+                println!(
+                    "{:>8.3}s  {}  fault_pos=0x{:08x} fault_neg=0x{:08x}{}",
+                    elapsed,
+                    name,
+                    b.fault_bits_pos,
+                    b.fault_bits_neg,
+                    if b.has_faults() { " FAULTS!" } else { "" },
+                );
+            }
+        }
+        protocol::UUID_BATT_FW_VERSION => {
+            if let Some(ref b) = state.batt_fw_version {
+                println!(
+                    "{:>8.3}s  {}  pos={} neg={} serial={}",
+                    elapsed, name, b.pos_version, b.neg_version, b.serial,
+                );
+            }
+        }
+        protocol::UUID_BATT_PARAMS => {
+            if let Some(ref b) = state.batt_params {
+                println!(
+                    "{:>8.3}s  {}  {}s{}p capacity={}",
+                    elapsed, name, b.series, b.parallel, b.capacity,
+                );
+            }
+        }
+        protocol::UUID_BATT_SOC => {
+            if let Some(ref b) = state.batt_soc {
+                println!(
+                    "{:>8.3}s  {}  soc={} soh={} dc_bus={}",
+                    elapsed,
+                    name,
+                    fmt_u16(b.soc),
+                    fmt_u16(b.soh),
+                    fmt_u16(b.dc_bus),
+                );
+            }
+        }
+        protocol::UUID_BATT_TEMPS => {
+            if let Some(ref b) = state.batt_temps {
+                let temps: Vec<String> = b.sensors.iter().map(|t| fmt_u16(*t)).collect();
+                println!(
+                    "{:>8.3}s  {}  [{}] valid={} used={}",
+                    elapsed,
+                    name,
+                    temps.join(","),
+                    b.valid,
+                    b.used,
+                );
+            }
+        }
+        protocol::UUID_BATT_CELLS => {
+            if let Some(ref b) = state.batt_cells {
+                let active = b.active_count();
+                let volts: Vec<String> = b
+                    .voltages
+                    .iter()
+                    .filter_map(|v| *v)
+                    .map(|v| v.to_string())
+                    .collect();
+                println!(
+                    "{:>8.3}s  {}  {}/{} active cells: [{}]",
+                    elapsed,
+                    name,
+                    active,
+                    b.voltages.len(),
+                    if volts.len() > 10 {
+                        format!(
+                            "{} ... {}",
+                            volts[..5].join(","),
+                            volts[volts.len() - 5..].join(",")
+                        )
+                    } else {
+                        volts.join(",")
+                    },
+                );
+            }
+        }
+        protocol::UUID_BATT_SIGNALS => {
+            if let Some(ref b) = state.batt_signals {
+                println!(
+                    "{:>8.3}s  {}  current={} pos_bus={} neg_bus={} \
+                     pos_temp={} neg_temp={}",
+                    elapsed,
+                    name,
+                    fmt_i16(b.current),
+                    fmt_u16(b.pos_dc_bus),
+                    fmt_u16(b.neg_dc_bus),
+                    fmt_u16(b.pos_temp),
+                    fmt_u16(b.neg_temp),
+                );
+            }
+        }
+
+        // Service 0x7000 — Inverter
+        protocol::UUID_INV_INFO => {
+            if let Some(ref i) = state.inv_info {
+                println!(
+                    "{:>8.3}s  {}  faults=0x{:04x} status=0x{:08x} \
+                     logic_fw={} gate_fw={} hw={} humidity={}",
+                    elapsed,
+                    name,
+                    i.faults,
+                    i.status,
+                    i.logic_fw_version,
+                    i.gate_fw_version,
+                    i.hardware_version,
+                    i.humidity,
+                );
+            }
+        }
+        protocol::UUID_INV_SIGNALS => {
+            if let Some(ref i) = state.inv_signals {
+                println!(
+                    "{:>8.3}s  {}  dc_bus={} iq={}/{} id={}/{} vq={} vd={}",
+                    elapsed,
+                    name,
+                    fmt_u16(i.dc_bus),
+                    fmt_i16(i.iq),
+                    fmt_u16(i.iq_ref),
+                    fmt_i16(i.id),
+                    fmt_u16(i.id_ref),
+                    fmt_u16(i.vq),
+                    fmt_u16(i.vd),
+                );
+            }
+        }
+        protocol::UUID_INV_TEMPS => {
+            if let Some(ref i) = state.inv_temps {
+                println!(
+                    "{:>8.3}s  {}  motor=[{},{},{}] igbt=[{},{},{}]",
+                    elapsed,
+                    name,
+                    fmt_u16(i.motor.sensor1),
+                    fmt_u16(i.motor.sensor2),
+                    fmt_u16(i.motor.sensor3),
+                    fmt_u16(i.igbt.sensor1),
+                    fmt_u16(i.igbt.sensor2),
+                    fmt_u16(i.igbt.sensor3),
+                );
+            }
+        }
+        protocol::UUID_INV_PCB => {
+            if let Some(ref i) = state.inv_pcb {
+                println!(
+                    "{:>8.3}s  {}  mcu_logic={} mcu_gate={} pcb_temp={} \
+                     pcb_hum={} serial={}",
+                    elapsed,
+                    name,
+                    fmt_u16(i.mcu_temp_logic),
+                    fmt_u16(i.mcu_temp_gate),
+                    fmt_u16(i.pcb_temp),
+                    fmt_u16(i.pcb_humidity),
+                    i.serial_number,
+                );
+            }
+        }
+
+        // Anything we still don't recognize
         _ => {
             println!(
-                "{:>8.3}s  {:12}  UNKNOWN ({:>3} bytes)  {}",
+                "{:>8.3}s  {:12}  ({:>3} bytes)  {}",
                 elapsed,
                 name,
                 frame.data.len(),

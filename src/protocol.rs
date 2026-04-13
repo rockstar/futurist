@@ -74,28 +74,43 @@ pub const UUID_CHARGER_CONFIG: Uuid = Uuid::from_u128(0x00005101_5374_6172_4b20_
 // Service 0x6000 — Battery
 // ---------------------------------------------------------------------------
 
-pub const UUID_BATTERY_DATA_1: Uuid = Uuid::from_u128(0x00006001_5374_6172_4b20_467574757265);
-pub const UUID_BATTERY_DATA_2: Uuid = Uuid::from_u128(0x00006002_5374_6172_4b20_467574757265);
-pub const UUID_BATTERY_DATA_3: Uuid = Uuid::from_u128(0x00006003_5374_6172_4b20_467574757265);
-pub const UUID_BATTERY_DATA_4: Uuid = Uuid::from_u128(0x00006004_5374_6172_4b20_467574757265);
-pub const UUID_BATTERY_DATA_5: Uuid = Uuid::from_u128(0x00006005_5374_6172_4b20_467574757265);
-pub const UUID_BATTERY_DATA_6: Uuid = Uuid::from_u128(0x00006006_5374_6172_4b20_467574757265);
-pub const UUID_BATTERY_DATA_7: Uuid = Uuid::from_u128(0x00006007_5374_6172_4b20_467574757265);
-pub const UUID_BATTERY_DATA_8: Uuid = Uuid::from_u128(0x00006008_5374_6172_4b20_467574757265);
-pub const UUID_BATTERY_DATA_9: Uuid = Uuid::from_u128(0x00006009_5374_6172_4b20_467574757265);
-pub const UUID_BATTERY_TLV: Uuid = Uuid::from_u128(0x00006100_5374_6172_4b20_467574757265);
-pub const UUID_BATTERY_CONFIG: Uuid = Uuid::from_u128(0x00006101_5374_6172_4b20_467574757265);
+/// Battery fault bits — 8 bytes: fault_bits_pos (u32), fault_bits_neg (u32).
+pub const UUID_BATT_STATUS: Uuid = Uuid::from_u128(0x00006001_5374_6172_4b20_467574757265);
+/// Battery firmware versions — 12 bytes: pos version, neg version, serial.
+pub const UUID_BATT_FW_VERSION: Uuid = Uuid::from_u128(0x00006002_5374_6172_4b20_467574757265);
+/// Battery params — 4 bytes: series (u8), parallel (u8), capacity (u16).
+pub const UUID_BATT_PARAMS: Uuid = Uuid::from_u128(0x00006003_5374_6172_4b20_467574757265);
+/// Battery SOC — 6 bytes: soc (u16), soh (u16), dc_bus (u16).
+pub const UUID_BATT_SOC: Uuid = Uuid::from_u128(0x00006004_5374_6172_4b20_467574757265);
+/// Battery temperatures — 27 bytes: 12x u16 temps + valid (u16) + used (u8).
+pub const UUID_BATT_TEMPS: Uuid = Uuid::from_u128(0x00006005_5374_6172_4b20_467574757265);
+/// Battery DC bus — not actively parsed by the app.
+pub const UUID_BATT_DC_BUS: Uuid = Uuid::from_u128(0x00006006_5374_6172_4b20_467574757265);
+/// Battery cell voltages — 200 bytes: 100x u16 cell voltages.
+pub const UUID_BATT_CELLS: Uuid = Uuid::from_u128(0x00006007_5374_6172_4b20_467574757265);
+/// Battery balancing — raw bytes (typically 13).
+pub const UUID_BATT_BALANCING: Uuid = Uuid::from_u128(0x00006008_5374_6172_4b20_467574757265);
+/// Battery BMS signals — 18 bytes: 2x BMSSignals (8 bytes each) + current (i16).
+pub const UUID_BATT_SIGNALS: Uuid = Uuid::from_u128(0x00006009_5374_6172_4b20_467574757265);
+/// Battery config (0x600A).
+pub const UUID_BATT_CFG: Uuid = Uuid::from_u128(0x0000600a_5374_6172_4b20_467574757265);
+pub const UUID_BATT_TLV: Uuid = Uuid::from_u128(0x00006100_5374_6172_4b20_467574757265);
+pub const UUID_BATT_EXT_CONFIG: Uuid = Uuid::from_u128(0x00006101_5374_6172_4b20_467574757265);
 
 // ---------------------------------------------------------------------------
 // Service 0x7000 — Inverter
 // ---------------------------------------------------------------------------
 
-pub const UUID_INVERTER_DATA_1: Uuid = Uuid::from_u128(0x00007001_5374_6172_4b20_467574757265);
-pub const UUID_INVERTER_DATA_2: Uuid = Uuid::from_u128(0x00007002_5374_6172_4b20_467574757265);
-pub const UUID_INVERTER_DATA_3: Uuid = Uuid::from_u128(0x00007003_5374_6172_4b20_467574757265);
-pub const UUID_INVERTER_DATA_4: Uuid = Uuid::from_u128(0x00007004_5374_6172_4b20_467574757265);
-pub const UUID_INVERTER_TLV: Uuid = Uuid::from_u128(0x00007100_5374_6172_4b20_467574757265);
-pub const UUID_INVERTER_CONFIG: Uuid = Uuid::from_u128(0x00007101_5374_6172_4b20_467574757265);
+/// Inverter info — faults, status, firmware versions, humidity.
+pub const UUID_INV_INFO: Uuid = Uuid::from_u128(0x00007001_5374_6172_4b20_467574757265);
+/// Inverter signals — 14 bytes: dc_bus, iq/id ref/actual, vq, vd.
+pub const UUID_INV_SIGNALS: Uuid = Uuid::from_u128(0x00007002_5374_6172_4b20_467574757265);
+/// Inverter temperatures — 16 bytes: motor (3 sensors) + IGBT (3 sensors).
+pub const UUID_INV_TEMPS: Uuid = Uuid::from_u128(0x00007003_5374_6172_4b20_467574757265);
+/// Inverter PCB — 18 bytes: MCU temps, NTCs, PCB temp/humidity, serial.
+pub const UUID_INV_PCB: Uuid = Uuid::from_u128(0x00007004_5374_6172_4b20_467574757265);
+pub const UUID_INV_TLV: Uuid = Uuid::from_u128(0x00007100_5374_6172_4b20_467574757265);
+pub const UUID_INV_CONFIG: Uuid = Uuid::from_u128(0x00007101_5374_6172_4b20_467574757265);
 
 // ---------------------------------------------------------------------------
 // Standard BLE
@@ -134,8 +149,8 @@ pub fn characteristic_name(uuid: Uuid) -> Option<&'static str> {
         UUID_LIVE_EXT_CONFIG => "live_ext_cfg",
 
         // 0x3000 — Docking
-        UUID_DOCKING_DATA_1 => "dock_1",
-        UUID_DOCKING_DATA_2 => "dock_2",
+        UUID_DOCKING_DATA_1 => "dock_ver",
+        UUID_DOCKING_DATA_2 => "dock_qi",
         UUID_DOCKING_TLV => "dock_tlv",
         UUID_DOCKING_CONFIG => "dock_cfg",
 
@@ -151,25 +166,26 @@ pub fn characteristic_name(uuid: Uuid) -> Option<&'static str> {
         UUID_CHARGER_CONFIG => "chg_cfg",
 
         // 0x6000 — Battery
-        UUID_BATTERY_DATA_1 => "batt_1",
-        UUID_BATTERY_DATA_2 => "batt_2",
-        UUID_BATTERY_DATA_3 => "batt_3",
-        UUID_BATTERY_DATA_4 => "batt_4",
-        UUID_BATTERY_DATA_5 => "batt_5",
-        UUID_BATTERY_DATA_6 => "batt_6",
-        UUID_BATTERY_DATA_7 => "batt_7",
-        UUID_BATTERY_DATA_8 => "batt_8",
-        UUID_BATTERY_DATA_9 => "batt_9",
-        UUID_BATTERY_TLV => "batt_tlv",
-        UUID_BATTERY_CONFIG => "batt_cfg",
+        UUID_BATT_STATUS => "batt_status",
+        UUID_BATT_FW_VERSION => "batt_fw",
+        UUID_BATT_PARAMS => "batt_params",
+        UUID_BATT_SOC => "batt_soc",
+        UUID_BATT_TEMPS => "batt_temps",
+        UUID_BATT_DC_BUS => "batt_dc_bus",
+        UUID_BATT_CELLS => "batt_cells",
+        UUID_BATT_BALANCING => "batt_bal",
+        UUID_BATT_SIGNALS => "batt_signals",
+        UUID_BATT_CFG => "batt_cfg",
+        UUID_BATT_TLV => "batt_tlv",
+        UUID_BATT_EXT_CONFIG => "batt_ext_cfg",
 
         // 0x7000 — Inverter
-        UUID_INVERTER_DATA_1 => "inv_1",
-        UUID_INVERTER_DATA_2 => "inv_2",
-        UUID_INVERTER_DATA_3 => "inv_3",
-        UUID_INVERTER_DATA_4 => "inv_4",
-        UUID_INVERTER_TLV => "inv_tlv",
-        UUID_INVERTER_CONFIG => "inv_cfg",
+        UUID_INV_INFO => "inv_info",
+        UUID_INV_SIGNALS => "inv_signals",
+        UUID_INV_TEMPS => "inv_temps",
+        UUID_INV_PCB => "inv_pcb",
+        UUID_INV_TLV => "inv_tlv",
+        UUID_INV_CONFIG => "inv_cfg",
 
         // Standard BLE
         UUID_BATTERY_LEVEL => "battery",

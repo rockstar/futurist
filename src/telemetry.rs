@@ -157,30 +157,7 @@ impl BikeIdentity {
 // Decoded types — Service 0x2000 (live riding data)
 // ---------------------------------------------------------------------------
 
-// 0xFFFF for u16 and 0xFFFFFFFF for u32 are sentinel values meaning
-// "no data" / "not available". The bike sends these when a sensor isn't
-// active (e.g. motor RPM when stationary). We convert them to None.
-
-fn opt_u16(data: &[u8], offset: usize) -> Option<u16> {
-    let v = u16::from_le_bytes([data[offset], data[offset + 1]]);
-    if v == 0xFFFF { None } else { Some(v) }
-}
-
-fn opt_i16(data: &[u8], offset: usize) -> Option<i16> {
-    let v = i16::from_le_bytes([data[offset], data[offset + 1]]);
-    // 0x7FFF (32767) is the signed sentinel.
-    if v == i16::MAX { None } else { Some(v) }
-}
-
-fn opt_u32(data: &[u8], offset: usize) -> Option<u32> {
-    let v = u32::from_le_bytes([
-        data[offset],
-        data[offset + 1],
-        data[offset + 2],
-        data[offset + 3],
-    ]);
-    if v == 0xFFFF_FFFF { None } else { Some(v) }
-}
+use crate::decode::{opt_i16, opt_u16, opt_u32};
 
 /// Speed from characteristic 00002001 (4 bytes).
 #[derive(Debug, Clone, Default)]
@@ -433,13 +410,19 @@ pub fn parse_battery_level(data: &[u8]) -> Option<u8> {
 // Aggregated decoded state
 // ---------------------------------------------------------------------------
 
+use crate::decode::{battery, charger, docking, inverter, vcu};
+
 /// Decoded telemetry snapshot assembled from multiple characteristics.
 #[derive(Debug, Clone, Default)]
 pub struct DecodedTelemetry {
+    // Service 0x1000
     pub status: Option<StatusBits>,
     pub identity: Option<BikeIdentity>,
-    pub battery_percent: Option<u8>,
     pub versions: Option<BikeVersions>,
+    pub tlv_entries: Vec<TlvEntry>,
+    pub battery_percent: Option<u8>,
+
+    // Service 0x2000
     pub speed: Option<Speed>,
     pub throttle: Option<Throttle>,
     pub imu: Option<Imu>,
@@ -447,55 +430,250 @@ pub struct DecodedTelemetry {
     pub totals: Option<Totals>,
     pub estimations: Option<Estimations>,
     pub racing: Option<Racing>,
-    pub tlv_entries: Vec<TlvEntry>,
+
+    // Service 0x3000
+    pub docking_version: Option<docking::DockingVersion>,
+    pub docking_qi: Option<docking::DockingQiStatus>,
+
+    // Service 0x4000
+    pub vcu_versions: Option<vcu::VcuVersions>,
+    pub vcu_info: Option<vcu::VcuInfo>,
+
+    // Service 0x5000
+    pub charger: Option<charger::ChargerData>,
+
+    // Service 0x6000
+    pub batt_status: Option<battery::BatteryStatus>,
+    pub batt_fw_version: Option<battery::BatteryFirmwareVersion>,
+    pub batt_params: Option<battery::BatteryParams>,
+    pub batt_soc: Option<battery::BatterySoc>,
+    pub batt_temps: Option<battery::BatteryTemperatures>,
+    pub batt_cells: Option<battery::BatteryCells>,
+    pub batt_signals: Option<battery::BatterySignals>,
+
+    // Service 0x7000
+    pub inv_info: Option<inverter::InverterInfo>,
+    pub inv_signals: Option<inverter::InverterSignals>,
+    pub inv_temps: Option<inverter::InverterTemperatures>,
+    pub inv_pcb: Option<inverter::InverterPcb>,
 }
 
 impl DecodedTelemetry {
     /// Update this snapshot with a new raw frame.
     pub fn update(&mut self, frame: &TelemetryFrame) {
         match frame.characteristic {
-            protocol::UUID_STATUS_BITS => {
-                self.status = StatusBits::parse(&frame.data);
-            }
-            protocol::UUID_IDENTITY => {
-                self.identity = BikeIdentity::parse(&frame.data);
-            }
-            protocol::UUID_BATTERY_LEVEL => {
-                self.battery_percent = parse_battery_level(&frame.data);
-            }
-            protocol::UUID_VERSIONS => {
-                self.versions = BikeVersions::parse(&frame.data);
-            }
+            // Service 0x1000 — dedicated
+            protocol::UUID_STATUS_BITS => self.status = StatusBits::parse(&frame.data),
+            protocol::UUID_IDENTITY => self.identity = BikeIdentity::parse(&frame.data),
+            protocol::UUID_BATTERY_LEVEL => self.battery_percent = parse_battery_level(&frame.data),
+            protocol::UUID_VERSIONS => self.versions = BikeVersions::parse(&frame.data),
+
+            // Service 0x1000 — TLV
             protocol::UUID_EXTENDED_TLV => {
-                self.tlv_entries = parse_tlv(&frame.data);
+                let entries = parse_tlv(&frame.data);
+                for entry in &entries {
+                    self.decode_bike_tlv(entry);
+                }
+                self.tlv_entries = entries;
             }
-            protocol::UUID_SPEED => {
-                self.speed = Speed::parse(&frame.data);
+
+            // Service 0x2000 — dedicated
+            protocol::UUID_SPEED => self.speed = Speed::parse(&frame.data),
+            protocol::UUID_THROTTLE => self.throttle = Throttle::parse(&frame.data),
+            protocol::UUID_IMU => self.imu = Imu::parse(&frame.data),
+            protocol::UUID_MAPS => self.ride_mode = frame.data.first().copied(),
+            protocol::UUID_TOTALS => self.totals = Totals::parse(&frame.data),
+            protocol::UUID_ESTIMATIONS => self.estimations = Estimations::parse(&frame.data),
+            protocol::UUID_RACING => self.racing = Racing::parse(&frame.data),
+
+            // Service 0x2000 — TLV
+            protocol::UUID_LIVE_TLV => {
+                for entry in parse_tlv(&frame.data) {
+                    self.decode_live_tlv(&entry);
+                }
             }
-            protocol::UUID_THROTTLE => {
-                self.throttle = Throttle::parse(&frame.data);
+
+            // Service 0x3000 — dedicated
+            protocol::UUID_DOCKING_DATA_1 => {
+                self.docking_version = docking::DockingVersion::parse(&frame.data)
             }
-            protocol::UUID_IMU => {
-                self.imu = Imu::parse(&frame.data);
+            protocol::UUID_DOCKING_DATA_2 => {
+                self.docking_qi = docking::DockingQiStatus::parse(&frame.data)
             }
-            protocol::UUID_MAPS => {
-                self.ride_mode = frame.data.first().copied();
+            // Service 0x3000 — TLV
+            protocol::UUID_DOCKING_TLV => {
+                for entry in parse_tlv(&frame.data) {
+                    match entry.entry_type {
+                        1 => self.docking_version = docking::DockingVersion::parse(&entry.data),
+                        2 => self.docking_qi = docking::DockingQiStatus::parse(&entry.data),
+                        _ => {}
+                    }
+                }
             }
-            protocol::UUID_TOTALS => {
-                self.totals = Totals::parse(&frame.data);
+
+            // Service 0x4000 — dedicated
+            protocol::UUID_VCU_VERSIONS => self.vcu_versions = vcu::VcuVersions::parse(&frame.data),
+            protocol::UUID_VCU_INFO => self.vcu_info = vcu::VcuInfo::parse(&frame.data),
+            // Service 0x4000 — TLV
+            protocol::UUID_VCU_TLV => {
+                for entry in parse_tlv(&frame.data) {
+                    match entry.entry_type {
+                        1 => self.vcu_versions = vcu::VcuVersions::parse(&entry.data),
+                        2 => self.vcu_info = vcu::VcuInfo::parse(&entry.data),
+                        _ => {}
+                    }
+                }
             }
-            protocol::UUID_ESTIMATIONS => {
-                self.estimations = Estimations::parse(&frame.data);
+
+            // Service 0x5000 — dedicated
+            protocol::UUID_CHARGER_DATA => self.charger = charger::ChargerData::parse(&frame.data),
+            // Service 0x5000 — TLV
+            protocol::UUID_CHARGER_TLV => {
+                for entry in parse_tlv(&frame.data) {
+                    if entry.entry_type == 1 {
+                        self.charger = charger::ChargerData::parse(&entry.data);
+                    }
+                }
             }
-            protocol::UUID_RACING => {
-                self.racing = Racing::parse(&frame.data);
+
+            // Service 0x6000 — dedicated
+            protocol::UUID_BATT_STATUS => {
+                self.batt_status = battery::BatteryStatus::parse(&frame.data)
             }
+            protocol::UUID_BATT_FW_VERSION => {
+                self.batt_fw_version = battery::BatteryFirmwareVersion::parse(&frame.data)
+            }
+            protocol::UUID_BATT_PARAMS => {
+                self.batt_params = battery::BatteryParams::parse(&frame.data)
+            }
+            protocol::UUID_BATT_SOC => self.batt_soc = battery::BatterySoc::parse(&frame.data),
+            protocol::UUID_BATT_TEMPS => {
+                self.batt_temps = battery::BatteryTemperatures::parse(&frame.data)
+            }
+            protocol::UUID_BATT_CELLS => {
+                self.batt_cells = battery::BatteryCells::parse(&frame.data)
+            }
+            protocol::UUID_BATT_SIGNALS => {
+                self.batt_signals = battery::BatterySignals::parse(&frame.data)
+            }
+            // Service 0x6000 — TLV
+            protocol::UUID_BATT_TLV => {
+                for entry in parse_tlv(&frame.data) {
+                    self.decode_battery_tlv(&entry);
+                }
+            }
+
+            // Service 0x7000 — dedicated
+            protocol::UUID_INV_INFO => self.inv_info = inverter::InverterInfo::parse(&frame.data),
+            protocol::UUID_INV_SIGNALS => {
+                self.inv_signals = inverter::InverterSignals::parse(&frame.data)
+            }
+            protocol::UUID_INV_TEMPS => {
+                self.inv_temps = inverter::InverterTemperatures::parse(&frame.data)
+            }
+            protocol::UUID_INV_PCB => self.inv_pcb = inverter::InverterPcb::parse(&frame.data),
+            // Service 0x7000 — TLV
+            protocol::UUID_INV_TLV => {
+                for entry in parse_tlv(&frame.data) {
+                    self.decode_inverter_tlv(&entry);
+                }
+            }
+
+            _ => {}
+        }
+    }
+
+    fn decode_bike_tlv(&mut self, entry: &TlvEntry) {
+        match entry.entry_type {
+            // Type 1: Fast Bits — compact status update (8 bytes)
+            1 if entry.data.len() >= 8 => {
+                if let Some(ref mut s) = self.status {
+                    s.misc_bits = u16::from_le_bytes([entry.data[0], entry.data[1]]);
+                    s.indicator_bits = u16::from_le_bytes([entry.data[2], entry.data[3]]);
+                    s.alert_bits = u16::from_le_bytes([entry.data[4], entry.data[5]]);
+                    s.info_bits = u16::from_le_bytes([entry.data[6], entry.data[7]]);
+                }
+            }
+            // Type 2: Lock Status (3 bytes)
+            2 if entry.data.len() >= 3 => {
+                if let Some(ref mut s) = self.status {
+                    s.lock_status = entry.data[0];
+                    s.lock_time = u16::from_le_bytes([entry.data[1], entry.data[2]]);
+                }
+            }
+            // Type 3: Update Available (1 byte)
+            3 if !entry.data.is_empty() => {
+                if let Some(ref mut s) = self.status {
+                    s.update_available = entry.data[0] == 1;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn decode_live_tlv(&mut self, entry: &TlvEntry) {
+        match entry.entry_type {
+            1 => self.speed = Speed::parse(&entry.data),
+            2 => self.throttle = Throttle::parse(&entry.data),
+            3 => self.imu = Imu::parse(&entry.data),
+            4 => self.ride_mode = entry.data.first().copied(),
+            5 => self.estimations = Estimations::parse(&entry.data),
+            6 => self.totals = Totals::parse(&entry.data),
+            7 => self.racing = Racing::parse(&entry.data),
+            _ => {}
+        }
+    }
+
+    fn decode_battery_tlv(&mut self, entry: &TlvEntry) {
+        match entry.entry_type {
+            2 => self.batt_signals = battery::BatterySignals::parse(&entry.data),
+            3 => self.batt_cells = battery::BatteryCells::parse(&entry.data),
+            // 4 => balancing (raw bytes, skipped)
+            5 => self.batt_temps = battery::BatteryTemperatures::parse(&entry.data),
+            6 => self.batt_params = battery::BatteryParams::parse(&entry.data),
+            7 => self.batt_fw_version = battery::BatteryFirmwareVersion::parse(&entry.data),
+            8 => self.batt_soc = battery::BatterySoc::parse(&entry.data),
+            // 9 => BatteryInfo (not yet decoded)
+            _ => {}
+        }
+    }
+
+    fn decode_inverter_tlv(&mut self, entry: &TlvEntry) {
+        match entry.entry_type {
+            1 => self.inv_signals = inverter::InverterSignals::parse(&entry.data),
+            2 => {
+                // IGBT temperatures only — update igbt half
+                if let Some(sensors) = inverter::TempSensors::parse(&entry.data) {
+                    if let Some(ref mut t) = self.inv_temps {
+                        t.igbt = sensors;
+                    } else {
+                        self.inv_temps = Some(inverter::InverterTemperatures {
+                            igbt: sensors,
+                            ..Default::default()
+                        });
+                    }
+                }
+            }
+            3 => {
+                // Motor temperatures only — update motor half
+                if let Some(sensors) = inverter::TempSensors::parse(&entry.data) {
+                    if let Some(ref mut t) = self.inv_temps {
+                        t.motor = sensors;
+                    } else {
+                        self.inv_temps = Some(inverter::InverterTemperatures {
+                            motor: sensors,
+                            ..Default::default()
+                        });
+                    }
+                }
+            }
+            4 => self.inv_pcb = inverter::InverterPcb::parse(&entry.data),
+            5 => self.inv_info = inverter::InverterInfo::parse(&entry.data),
             _ => {}
         }
     }
 }
 
-/// Human-readable name for a characteristic UUID.
 /// Human-readable name for a characteristic UUID.
 pub fn characteristic_name(uuid: Uuid) -> &'static str {
     protocol::characteristic_name(uuid).unwrap_or("unknown")
