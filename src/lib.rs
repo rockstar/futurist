@@ -6,5 +6,6 @@ pub mod ble;
 pub mod cli;
 pub mod crypto;
 pub mod decode;
+pub mod presets;
 pub mod protocol;
 pub mod telemetry;

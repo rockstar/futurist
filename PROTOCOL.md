@@ -669,53 +669,183 @@ QI wireless charging status code.
 
 ## VCU Configuration
 
-Service `0x4000`, characteristic `0x4005`. This is a read/write channel for
-bike configuration. Each packet has a 3-byte header:
+Service `0x4000`, characteristic `0x4005`. This is a request/response channel
+for reading and writing bike configuration. All interactions follow the same
+pattern:
 
-| Offset | Type | Field |
-|--------|------|-------|
-| 0 | u8 | Read/Write (0 = read request/response, 1 = write) |
-| 1 | u8 | Config type |
-| 2 | u8 | Status |
-| 3+ | varies | Config data (depends on type) |
+**Read request:** Write `[0x00, type, ...read_payload]` to `0x4005`.
+The bike responds via notification with `[0x02, type, status, ...data]`.
+
+**Write request:** Write `[0x01, type, ...write_payload]` to `0x4005`.
+
+Note: the request has **no status byte** (2-byte header), but the response
+has a 3-byte header (readWrite=2, type, status). Some BLE stacks echo the
+write back as a notification — filter to both `readWrite=2` AND the expected
+type byte to avoid consuming stale responses from other config types.
+Responses may arrive out of order.
 
 **Config types:**
 
-| Type | Name | Description |
-|------|------|-------------|
-| 0 | Map Config | Power mode settings |
-| 1 | Curves Config | Throttle curve settings |
-| 2 | Racing Config | Racing mode settings |
-| 3 | Misc Config | Miscellaneous settings |
-| 4 | Charger Config | Charging settings |
-| 5 | Lock Bike Config | Lock/security settings |
-| 7 | Totals Config | Odometer/totals settings |
+| Type | Name | Writable | Read Payload | Description |
+|------|------|----------|-------------|-------------|
+| 0 | Map Config | Yes | 1 byte (slot) | Power mode settings per slot |
+| 1 | Curves Config | Yes | 1 byte (curve index) | 15-point throttle response curves |
+| 2 | Racing Config | Yes | (none) | Racing mode settings |
+| 3 | Misc Config | Yes | (none) | Map count, timeouts |
+| 4 | Charger Config | Yes | (none) | Charging parameters |
+| 5 | Lock Bike Config | Yes | (none) | Lock/security settings |
+| 7 | Totals Config | Read-only | 2 bytes (flags) | Odometer/ride time. May return empty on some firmware. |
 
 ### Map Config (type 0)
 
-The map config defines a power mode slot. To read a map's configuration,
-write a read request to `0x4005`; the bike responds via notification.
+Defines a power mode slot. The bike has 5 slots (0–4) selectable via the
+handlebar map switch. The number of configured slots is reported by
+[Misc Config](#misc-config-type-3). All slots may be configured
+identically from the factory.
 
-**Read request data:** 1 byte — the map slot number.
+**Read payload:** 1 byte — slot number.
 
 **Response data (6 bytes):**
 
+| Offset | Type | Field | Notes |
+|--------|------|-------|-------|
+| 0 | u8 | Slot number | |
+| 1–2 | i16 | Torque | Divide by 1.25 for power as HP. Max 80hp = torque 100. |
+| 3–4 | i16 | Regen | 0 = no engine braking, 100 = maximum. |
+| 5 | u8 | Curve | Index into throttle response curves (0 = default). |
+
+**Write payload (7 bytes):**
+
 | Offset | Type | Field |
 |--------|------|-------|
-| 0 | u8 | Map slot number |
-| 1–2 | i16 | Torque (divide by 1.25 for power percentage) |
-| 3–4 | i16 | Regenerative braking level |
-| 5 | u8 | Throttle curve |
-
-**Write data (7 bytes):**
-
-| Offset | Type | Field |
-|--------|------|-------|
-| 0 | u8 | Map slot number |
-| 1 | u8 | Save flag |
+| 0 | u8 | Slot number |
+| 1 | u8 | Save flag (1 = persist to flash) |
 | 2–3 | i16 | Torque |
 | 4–5 | i16 | Regen |
 | 6 | u8 | Curve |
+
+**App defaults** (from app constants `POWER_MODES_DEFAULT`):
+Slots 0–4 at 44, 48, 52, 56, 60 HP respectively, all with regen 100
+and curve 0. Note: the bike's actual configuration may differ — a tested
+Gen 1 Varg had all 5 slots set to 40 HP / regen 70 / curve 0 (likely
+set by a firmware update, not the factory defaults).
+
+### Curves Config (type 1)
+
+A throttle response curve — a 15-point lookup table that maps throttle
+grip position to torque and regen output. The bike stores up to 5 curves
+(indices 0–4). Curve 0 is the built-in default and **returns an empty
+response when read** — it cannot be read or modified. Curves 1–4 are
+user-configurable and default to all-1000 values (unmodified).
+
+**Read payload:** 1 byte — curve index.
+
+**Response data (61 bytes, or 0 bytes for curve 0):**
+
+| Offset | Type | Field |
+|--------|------|-------|
+| 0 | u8 | Curve index |
+| 1–60 | 15 × 4 bytes | 15 points, each: torque (u16 LE) + regen (u16 LE) |
+
+The 15 points correspond to evenly-spaced throttle input positions. Each
+point defines the torque and regen output at that throttle position. A
+value of 1000 appears to mean "use default/linear."
+
+**Write payload (66 bytes):** save (u8), curve (u8), 2 × i16 padding
+(0x7FFF), then 15 × torque (i16 LE), then 15 × regen (i16 LE).
+
+### Racing Config (type 2)
+
+**Read payload:** (none — 0 bytes).
+
+**Response data (10 bytes):**
+
+| Offset | Type | Field |
+|--------|------|-------|
+| 0 | u8 | Racing mode |
+| 1 | u8 | Curve |
+| 2 | u8 | Neutral on threshold |
+| 3 | u8 | Neutral off threshold |
+| 4 | u8 | Engage threshold |
+| 5 | u8 | Category |
+| 6–9 | u32 | Expiry timestamp (Unix seconds) |
+
+**Write payload (6 bytes):** mode (u8), category (u8), expire timestamp
+(u32 LE).
+
+### Misc Config (type 3)
+
+General bike settings including the number of configured power mode slots.
+
+**Read payload:** (none — 0 bytes).
+
+**Response data (5 bytes):**
+
+| Offset | Type | Field | Notes |
+|--------|------|-------|-------|
+| 0 | u8 | Maps | Number of configured power mode slots. Observed: 5. |
+| 1–2 | u16 | Inactive timeout | Inactivity timeout. Observed: 15 (likely seconds). |
+| 3–4 | u16 | Auto power off | Auto power-off timeout. Observed: 600 (likely seconds = 10 minutes). |
+
+**Write payload (6 bytes):** save (u8), maps (u8), inactive timeout
+(i16 LE), auto power off (i16 LE).
+
+### Charger Config (type 4)
+
+Charging parameters.
+
+**Read payload:** (none — 0 bytes).
+
+**Response data (12 bytes):**
+
+| Offset | Type | Field | Observed |
+|--------|------|-------|----------|
+| 0–1 | i16 | Charge current | 100 |
+| 2–3 | i16 | Charge power | 3300 (likely watts = 3.3 kW onboard charger) |
+| 4–5 | i16 | Max SOC | 1000 (likely 100.0% × 10 = charge to full) |
+| 6–7 | i16 | Min current | 20 |
+| 8–9 | i16 | Start time | 2 |
+| 10–11 | i16 | Ramp time | 16 |
+
+**Write payload (7 bytes):** save (u8), charge current (i16 LE), charge
+power (i16 LE), max SOC (i16 LE). Note: write is shorter than read — only
+the first three fields are writable.
+
+### Lock Bike Config (type 5)
+
+Bike lock and security settings.
+
+**Read payload:** (none — 0 bytes).
+
+**Response data (4 bytes):**
+
+| Offset | Type | Field |
+|--------|------|-------|
+| 0 | u8 | Lock status |
+| 1 | u8 | Lock type |
+| 2–3 | u16 | Lock timeout |
+
+**Write payload (5 bytes):** action (u8), lock status (u8), lock type
+(u8), lock timeout (i16 LE).
+
+### Totals Config (type 7)
+
+Odometer and total ride time. Treat as **read-only**. May return an
+empty response on some firmware versions — in that case, use the live
+Totals notification (0x2005) instead.
+
+**Read payload:** 2 bytes — flags (u16 LE). Bit 0 = include odometer,
+bit 1 = include total ride time. Send `0x03 0x00` for both.
+
+**Response data (variable):**
+
+| Offset | Type | Field | Condition |
+|--------|------|-------|-----------|
+| 0–1 | u16 | Flags | Always present |
+| 2–5 | u32 | Odometer (meters) | If flags & 1 |
+| next 4 | u32 | Total ride time (seconds) | If flags & 2 |
+
+The odometer value is in **meters** (divide by 1000 for km).
 
 ---
 
@@ -794,6 +924,61 @@ While data remains:
 | 3 | Motor Temperatures | 8 bytes — motor temperature sensors only (half of 0x7003). |
 | 4 | PCB | 18 bytes — PCB data (same as 0x7004). |
 | 5 | Info | ~23 bytes — inverter info (same as 0x7001). |
+
+---
+
+## Data Redundancy
+
+Several pieces of information are available from multiple sources. This
+table documents the overlaps to help implementations choose the most
+appropriate source for each use case.
+
+| Data | Notification Source | Config Request | TLV Source | Notes |
+|------|-------------------|----------------|------------|-------|
+| **Odometer** | Totals (0x2005) | Totals Config (type 7) | Live TLV type 6 | Notification gives meters in real-time; config gives stored value. |
+| **Total ride time** | Totals (0x2005) | Totals Config (type 7) | Live TLV type 6 | Same as odometer. |
+| **Active map slot** | Maps (0x2004) | — | Live TLV type 4 | Notification only; to read the slot's *contents*, use Map Config. |
+| **Speed / RPM** | Speed (0x2001) | — | Live TLV type 1 | Dedicated characteristic or TLV; same data. |
+| **Throttle** | Throttle (0x2002) | — | Live TLV type 2 | Same. |
+| **IMU** | IMU (0x2003) | — | Live TLV type 3 | Same. |
+| **Status bits** | Status Bits (0x1002) | — | Bike TLV type 1 | TLV sends a compact 8-byte "fast bits" update (misc, indicators, alerts, info). The dedicated characteristic sends the full 18-byte struct including faults and lock. |
+| **Lock status** | Status Bits (0x1002) | Lock Config (type 5) | Bike TLV type 2 | Three sources: embedded in the full status struct, as a config response, or as a TLV entry. |
+| **Update available** | Status Bits (0x1002) | — | Bike TLV type 3 | Both the dedicated byte in status bits and the TLV entry. |
+| **Battery SOC** | Battery SOC (0x6004) | — | Battery TLV type 8 | Same data via dedicated characteristic or TLV. |
+| **Battery temps** | Battery Temps (0x6005) | — | Battery TLV type 5 | Same. |
+| **Inverter temps** | Inverter Temps (0x7003) | — | Inverter TLV types 2+3 | Dedicated char sends motor+IGBT together; TLV sends them as separate entries. |
+| **VCU versions** | VCU Versions (0x4001) | — | VCU TLV type 1 | Same. |
+
+**General guidance:** Use notifications for real-time telemetry (they push
+data continuously while the bike is on). Use config requests for one-shot
+reads of settings that don't change during a ride. Use TLV as a fallback
+or when a single multiplexed stream is preferred over many subscriptions.
+
+---
+
+## Scaling Factors and Units
+
+Raw BLE values often need scaling before display. Sentinel value `0xFFFF`
+(u16) or `0x7FFF` (i16) means "no data available."
+
+| Value | Raw Unit | Display Unit | Conversion |
+|-------|----------|-------------|------------|
+| Speed | u16 | km/h | ÷ 10 |
+| Motor RPM | u16 | RPM | Direct (filter ≥ 30000 as invalid) |
+| Torque (MapConfig) | i16 | HP | ÷ 1.25 |
+| Motor temperature | u16 | °C | ÷ 10 |
+| Battery temperature | u16 | °C | ÷ 100 |
+| VCU temperature | u16 | °C | ÷ 100 |
+| Inverter PCB humidity | u16 | % | ÷ 100 |
+| VCU humidity | u16 | % | ÷ 100 |
+| Inverter humidity | u32 | % | ÷ 100 |
+| Battery DC bus voltage | u16 | V | ÷ 10 |
+| Odometer | u32 | m | Direct (÷ 1000 for km) |
+| Airtime / ride time | u32 | seconds | Direct |
+| Watt-hours | u32 | Wh | Direct |
+| Battery current | i16 | A | Direct |
+| Motor power | i16 | W | Direct (negative = consuming) |
+| Throttle position | u16 | (raw) | Direct |
 
 ---
 
