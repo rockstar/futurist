@@ -63,13 +63,18 @@ impl InverterSignals {
 }
 
 /// Temperature sensor group (8 bytes: 3 sensors + valid + used).
+/// Raw sensor values are in tenths of °C; we store as f32 °C.
 #[derive(Debug, Clone, Default)]
 pub struct TempSensors {
-    pub sensor1: Option<u16>,
-    pub sensor2: Option<u16>,
-    pub sensor3: Option<u16>,
+    pub sensor1: Option<f32>,
+    pub sensor2: Option<f32>,
+    pub sensor3: Option<f32>,
     pub valid: u8,
     pub used: u8,
+}
+
+fn temp_c(data: &[u8], offset: usize) -> Option<f32> {
+    opt_u16(data, offset).map(|v| v as f32 / 10.0)
 }
 
 impl TempSensors {
@@ -78,9 +83,9 @@ impl TempSensors {
             return None;
         }
         Some(Self {
-            sensor1: opt_u16(data, 0),
-            sensor2: opt_u16(data, 2),
-            sensor3: opt_u16(data, 4),
+            sensor1: temp_c(data, 0),
+            sensor2: temp_c(data, 2),
+            sensor3: temp_c(data, 4),
             valid: data[6],
             used: data[7],
         })
@@ -107,6 +112,7 @@ impl InverterTemperatures {
 }
 
 /// 0x7004 — Inverter PCB data (18 bytes).
+/// Humidity is in hundredths of percent; we store as f32 %.
 #[derive(Debug, Clone, Default)]
 pub struct InverterPcb {
     pub mcu_temp_logic: Option<u16>,
@@ -115,7 +121,8 @@ pub struct InverterPcb {
     pub ntc2: Option<u16>,
     pub ntc3: Option<u16>,
     pub pcb_temp: Option<u16>,
-    pub pcb_humidity: Option<u16>,
+    /// PCB humidity in percent.
+    pub pcb_humidity_pct: Option<f32>,
     pub serial_number: u32,
 }
 
@@ -131,7 +138,7 @@ impl InverterPcb {
             ntc2: opt_u16(data, 6),
             ntc3: opt_u16(data, 8),
             pcb_temp: opt_u16(data, 10),
-            pcb_humidity: opt_u16(data, 12),
+            pcb_humidity_pct: opt_u16(data, 12).map(|v| v as f32 / 100.0),
             serial_number: read_u32(data, 14),
         })
     }

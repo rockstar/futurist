@@ -72,7 +72,8 @@ impl BatteryParams {
 pub struct BatterySoc {
     pub soc: Option<u16>,
     pub soh: Option<u16>,
-    pub dc_bus: Option<u16>,
+    /// DC bus voltage in volts (raw is tenths of volts).
+    pub dc_bus_v: Option<f32>,
 }
 
 impl BatterySoc {
@@ -83,16 +84,17 @@ impl BatterySoc {
         Some(Self {
             soc: opt_u16(data, 0),
             soh: opt_u16(data, 2),
-            dc_bus: opt_u16(data, 4),
+            dc_bus_v: opt_u16(data, 4).map(|v| v as f32 / 10.0),
         })
     }
 }
 
 /// 0x6005 — Battery temperatures (27 bytes).
+/// Raw values are in hundredths of °C; we store as f32 °C.
 #[derive(Debug, Clone)]
 pub struct BatteryTemperatures {
-    /// 12 temperature sensor readings (u16 each).
-    pub sensors: Vec<Option<u16>>,
+    /// 12 temperature sensor readings in °C.
+    pub sensors: Vec<Option<f32>>,
     pub valid: u16,
     pub used: u8,
 }
@@ -102,7 +104,9 @@ impl BatteryTemperatures {
         if data.len() < 27 {
             return None;
         }
-        let sensors = (0..12).map(|i| opt_u16(data, i * 2)).collect();
+        let sensors = (0..12)
+            .map(|i| opt_u16(data, i * 2).map(|v| v as f32 / 100.0))
+            .collect();
         Some(Self {
             sensors,
             valid: read_u16(data, 24),
@@ -187,7 +191,7 @@ mod tests {
         let s = BatterySoc::parse(&data).unwrap();
         assert_eq!(s.soc, Some(85));
         assert_eq!(s.soh, Some(97));
-        assert_eq!(s.dc_bus, Some(380));
+        assert!((s.dc_bus_v.unwrap() - 38.0).abs() < 0.1);
     }
 
     #[test]

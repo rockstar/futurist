@@ -33,10 +33,10 @@ pub struct VcuInfo {
     pub fan_current: Option<u16>,
     pub pump_current: Option<u16>,
     pub pump_ok_counter: Option<u16>,
-    /// Raw value; divide by 100 for percentage.
-    pub humidity: Option<u16>,
-    /// Raw value; divide by 100 for degrees.
-    pub temperature: Option<u16>,
+    /// Humidity in percent.
+    pub humidity_pct: Option<f32>,
+    /// Temperature in °C.
+    pub temperature_c: Option<f32>,
 }
 
 impl VcuInfo {
@@ -48,8 +48,8 @@ impl VcuInfo {
             fan_current: opt_u16(data, 0),
             pump_current: opt_u16(data, 2),
             pump_ok_counter: opt_u16(data, 4),
-            humidity: opt_u16(data, 6),
-            temperature: opt_u16(data, 8),
+            humidity_pct: opt_u16(data, 6).map(|v| v as f32 / 100.0),
+            temperature_c: opt_u16(data, 8).map(|v| v as f32 / 100.0),
         })
     }
 }

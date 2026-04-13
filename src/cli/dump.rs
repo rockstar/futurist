@@ -117,7 +117,7 @@ fn print_decoded(
                     "{:>8.3}s  {}  {} km/h  {} RPM",
                     elapsed,
                     name,
-                    fmt_f32(s.speed_kmh, 1),
+                    fmt_opt_f32(s.speed_kmh, 1),
                     fmt_u16(s.motor_rpm),
                 );
             }
@@ -160,10 +160,10 @@ fn print_decoded(
         protocol::UUID_TOTALS => {
             if let Some(ref t) = state.totals {
                 println!(
-                    "{:>8.3}s  {}  odo={} wh={} airtime={}s total_time={}s",
+                    "{:>8.3}s  {}  odo={}m wh={} airtime={}s total_time={}s",
                     elapsed,
                     name,
-                    fmt_u32(t.odometer),
+                    fmt_u32(t.odometer_m),
                     fmt_u32(t.watt_hours),
                     fmt_u32(t.airtime_secs),
                     fmt_u32(t.total_time_secs),
@@ -243,14 +243,14 @@ fn print_decoded(
         protocol::UUID_VCU_INFO => {
             if let Some(ref v) = state.vcu_info {
                 println!(
-                    "{:>8.3}s  {}  fan_curr={} pump_curr={} pump_ok={} humidity={} temp={}",
+                    "{:>8.3}s  {}  fan_curr={} pump_curr={} pump_ok={} humidity={}% temp={}°C",
                     elapsed,
                     name,
                     fmt_u16(v.fan_current),
                     fmt_u16(v.pump_current),
                     fmt_u16(v.pump_ok_counter),
-                    fmt_u16(v.humidity),
-                    fmt_u16(v.temperature),
+                    fmt_opt_f32(v.humidity_pct, 1),
+                    fmt_opt_f32(v.temperature_c, 1),
                 );
             }
         }
@@ -308,18 +308,18 @@ fn print_decoded(
         protocol::UUID_BATT_SOC => {
             if let Some(ref b) = state.batt_soc {
                 println!(
-                    "{:>8.3}s  {}  soc={} soh={} dc_bus={}",
+                    "{:>8.3}s  {}  soc={} soh={} dc_bus={}V",
                     elapsed,
                     name,
                     fmt_u16(b.soc),
                     fmt_u16(b.soh),
-                    fmt_u16(b.dc_bus),
+                    fmt_opt_f32(b.dc_bus_v, 1),
                 );
             }
         }
         protocol::UUID_BATT_TEMPS => {
             if let Some(ref b) = state.batt_temps {
-                let temps: Vec<String> = b.sensors.iter().map(|t| fmt_u16(*t)).collect();
+                let temps: Vec<String> = b.sensors.iter().map(|t| fmt_opt_f32(*t, 1)).collect();
                 println!(
                     "{:>8.3}s  {}  [{}] valid={} used={}",
                     elapsed,
@@ -409,15 +409,15 @@ fn print_decoded(
         protocol::UUID_INV_TEMPS => {
             if let Some(ref i) = state.inv_temps {
                 println!(
-                    "{:>8.3}s  {}  motor=[{},{},{}] igbt=[{},{},{}]",
+                    "{:>8.3}s  {}  motor=[{},{},{}]°C igbt=[{},{},{}]°C",
                     elapsed,
                     name,
-                    fmt_u16(i.motor.sensor1),
-                    fmt_u16(i.motor.sensor2),
-                    fmt_u16(i.motor.sensor3),
-                    fmt_u16(i.igbt.sensor1),
-                    fmt_u16(i.igbt.sensor2),
-                    fmt_u16(i.igbt.sensor3),
+                    fmt_opt_f32(i.motor.sensor1, 1),
+                    fmt_opt_f32(i.motor.sensor2, 1),
+                    fmt_opt_f32(i.motor.sensor3, 1),
+                    fmt_opt_f32(i.igbt.sensor1, 1),
+                    fmt_opt_f32(i.igbt.sensor2, 1),
+                    fmt_opt_f32(i.igbt.sensor3, 1),
                 );
             }
         }
@@ -425,13 +425,13 @@ fn print_decoded(
             if let Some(ref i) = state.inv_pcb {
                 println!(
                     "{:>8.3}s  {}  mcu_logic={} mcu_gate={} pcb_temp={} \
-                     pcb_hum={} serial={}",
+                     pcb_hum={}% serial={}",
                     elapsed,
                     name,
                     fmt_u16(i.mcu_temp_logic),
                     fmt_u16(i.mcu_temp_gate),
                     fmt_u16(i.pcb_temp),
-                    fmt_u16(i.pcb_humidity),
+                    fmt_opt_f32(i.pcb_humidity_pct, 1),
                     i.serial_number,
                 );
             }
@@ -564,7 +564,7 @@ fn fmt_u32(v: Option<u32>) -> String {
     }
 }
 
-fn fmt_f32(v: Option<f32>, decimals: usize) -> String {
+fn fmt_opt_f32(v: Option<f32>, decimals: usize) -> String {
     match v {
         Some(n) => format!("{n:.decimals$}"),
         None => "-".to_string(),

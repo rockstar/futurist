@@ -1,16 +1,14 @@
 pub mod dump;
 
-// To add a feature-gated subcommand:
-//
-//   #[cfg(feature = "dash")]
-//   pub mod dash;
-//
-//   // in Command enum:
-//   #[cfg(feature = "dash")]
-//   Dash(dash::DashArgs),
+#[cfg(feature = "dash")]
+pub mod dash;
 
 #[derive(clap::Subcommand)]
 pub enum Command {
     /// Dump raw telemetry frames from the bike to stdout.
     Dump(dump::DumpArgs),
+
+    /// Live telemetry dashboard.
+    #[cfg(feature = "dash")]
+    Dash(dash::DashArgs),
 }

@@ -162,7 +162,7 @@ use crate::decode::{opt_i16, opt_u16, opt_u32};
 /// Speed from characteristic 00002001 (4 bytes).
 #[derive(Debug, Clone, Default)]
 pub struct Speed {
-    /// Speed in km/h (raw value / 10). None if sensor unavailable.
+    /// Speed in km/h. None if sensor unavailable.
     pub speed_kmh: Option<f32>,
     /// Motor RPM. None if motor not running.
     pub motor_rpm: Option<u16>,
@@ -173,9 +173,13 @@ impl Speed {
         if data.len() < 4 {
             return None;
         }
+        // RPM: values near 0xFFFF (65534, 65533, etc.) are garbage from the
+        // motor controller when it's not running. Filter anything above a
+        // reasonable max.
+        let rpm = opt_u16(data, 2).filter(|&v| v < 30000);
         Some(Self {
             speed_kmh: opt_u16(data, 0).map(|v| v as f32 / 10.0),
-            motor_rpm: opt_u16(data, 2),
+            motor_rpm: rpm,
         })
     }
 }
@@ -231,7 +235,8 @@ impl Imu {
 /// Totals from characteristic 00002005 (16 bytes).
 #[derive(Debug, Clone, Default)]
 pub struct Totals {
-    pub odometer: Option<u32>,
+    /// Odometer in meters.
+    pub odometer_m: Option<u32>,
     pub watt_hours: Option<u32>,
     pub airtime_secs: Option<u32>,
     pub total_time_secs: Option<u32>,
@@ -243,7 +248,7 @@ impl Totals {
             return None;
         }
         Some(Self {
-            odometer: opt_u32(data, 0),
+            odometer_m: opt_u32(data, 0),
             watt_hours: opt_u32(data, 4),
             airtime_secs: opt_u32(data, 8),
             total_time_secs: opt_u32(data, 12),
@@ -740,7 +745,7 @@ mod tests {
         data[0..4].copy_from_slice(&1234u32.to_le_bytes());
         data[4..8].copy_from_slice(&56789u32.to_le_bytes());
         let t = Totals::parse(&data).unwrap();
-        assert_eq!(t.odometer, Some(1234));
+        assert_eq!(t.odometer_m, Some(1234));
         assert_eq!(t.watt_hours, Some(56789));
     }
 
