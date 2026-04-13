@@ -22,8 +22,15 @@ Validated against a Gen 1 Stark Varg.
   - [Intermediate Key Derivation](#intermediate-key-derivation)
   - [Challenge-Response Handshake](#challenge-response-handshake)
 - [Decoded Data Types](#decoded-data-types)
+- [Battery Data Types](#battery-data-types)
+- [Inverter Data Types](#inverter-data-types)
+- [Charger Data](#charger-data-0x5001--18-bytes)
+- [Docking Data](#docking-data)
+- [VCU Data Types](#vcu-data-types)
 - [VCU Configuration](#vcu-configuration)
 - [TLV Format](#tlv-format)
+- [Data Redundancy](#data-redundancy)
+- [Scaling Factors and Units](#scaling-factors-and-units)
 - [Firmware Variants](#firmware-variants)
 - [Wi-Fi Firmware Flashing](#wi-fi-firmware-flashing)
 
@@ -689,7 +696,7 @@ Responses may arrive out of order.
 | Type | Name | Writable | Read Payload | Description |
 |------|------|----------|-------------|-------------|
 | 0 | Map Config | Yes | 1 byte (slot) | Power mode settings per slot |
-| 1 | Curves Config | Yes | 1 byte (curve index) | 15-point throttle response curves |
+| 1 | Curves Config | Yes | 1 byte (curve index) | 15-point power curves across RPM range |
 | 2 | Racing Config | Yes | (none) | Racing mode settings |
 | 3 | Misc Config | Yes | (none) | Map count, timeouts |
 | 4 | Charger Config | Yes | (none) | Charging parameters |
@@ -712,7 +719,7 @@ identically from the factory.
 | 0 | u8 | Slot number | |
 | 1–2 | i16 | Torque | Divide by 1.25 for power as HP. Max 80hp = torque 100. |
 | 3–4 | i16 | Regen | 0 = no engine braking, 100 = maximum. |
-| 5 | u8 | Curve | Index into throttle response curves (0 = default). |
+| 5 | u8 | Curve | Index into power curves (0 = built-in default, 1–4 = custom). |
 
 **Write payload (7 bytes):**
 
@@ -724,19 +731,39 @@ identically from the factory.
 | 4–5 | i16 | Regen |
 | 6 | u8 | Curve |
 
-**App defaults** (from app constants `POWER_MODES_DEFAULT`):
-Slots 0–4 at 44, 48, 52, 56, 60 HP respectively, all with regen 100
-and curve 0. Note: the bike's actual configuration may differ — a tested
-Gen 1 Varg had all 5 slots set to 40 HP / regen 70 / curve 0 (likely
-set by a firmware update, not the factory defaults).
+**App defaults** (from app constants):
+- `MAX_POWER_HP = 80` — the bike's absolute maximum.
+- `STANDARD_POWER_HP = 60` — what the app considers "standard."
+- `PARENTAL_DEFAULT_POWER_HP = 20` — the parental/beginner lock.
+- `POWER_MODES_DEFAULT = [44, 48, 52, 56, 60]` — HP for slots 0–4,
+  all with regen 100 and curve 0.
+
+Note: the bike's actual configuration may differ — a tested Gen 1 Varg
+had all 5 slots set to 40 HP / regen 70 / curve 0 (likely set by a
+firmware update, not the factory defaults).
 
 ### Curves Config (type 1)
 
-A throttle response curve — a 15-point lookup table that maps throttle
-grip position to torque and regen output. The bike stores up to 5 curves
-(indices 0–4). Curve 0 is the built-in default and **returns an empty
-response when read** — it cannot be read or modified. Curves 1–4 are
-user-configurable and default to all-1000 values (unmodified).
+A power curve defines how much of the available torque and regen to
+deliver at each RPM. The bike stores up to 5 curves (indices 0–4).
+Curve 0 is the built-in default and **returns an empty response when
+read** — it cannot be read or modified. Curves 1–4 are user-configurable
+and default to all-1000 values (flat/linear).
+
+**The 15 points correspond to RPM breakpoints** from 0 to 14,000 RPM
+in 1,000 RPM steps:
+
+```
+Point:  0     1     2     3     4     5     6     7     8     9    10    11    12    13    14
+RPM:    0  1000  2000  3000  4000  5000  6000  7000  8000  9000 10000 11000 12000 13000 14000
+```
+
+Each value is a **scale factor from 0 to 1000** (where 1000 = 100% of
+available power at that RPM). For example:
+- All 1000 = flat power delivery across the full RPM range (default).
+- `[300, 400, 500, ..., 1000]` = reduced power at low RPM, full at
+  high RPM (gentler off the line).
+- `[500, 750, 1000, 1000, ..., 800, 700]` = peaks in the mid-range.
 
 **Read payload:** 1 byte — curve index.
 
@@ -745,11 +772,7 @@ user-configurable and default to all-1000 values (unmodified).
 | Offset | Type | Field |
 |--------|------|-------|
 | 0 | u8 | Curve index |
-| 1–60 | 15 × 4 bytes | 15 points, each: torque (u16 LE) + regen (u16 LE) |
-
-The 15 points correspond to evenly-spaced throttle input positions. Each
-point defines the torque and regen output at that throttle position. A
-value of 1000 appears to mean "use default/linear."
+| 1–60 | 15 × 4 bytes | 15 RPM points, each: torque (u16 LE) + regen (u16 LE) |
 
 **Write payload (66 bytes):** save (u8), curve (u8), 2 × i16 padding
 (0x7FFF), then 15 × torque (i16 LE), then 15 × regen (i16 LE).

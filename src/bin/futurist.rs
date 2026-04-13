@@ -21,6 +21,9 @@ async fn main() -> anyhow::Result<()> {
         futurist::cli::Command::Dump(dump_args) => futurist::cli::dump::run(dump_args).await,
 
         #[cfg(feature = "dash")]
+        futurist::cli::Command::ConfigUi(args) => futurist::cli::config_ui::run(args),
+
+        #[cfg(feature = "dash")]
         futurist::cli::Command::Dash(dash_args) => futurist::cli::dash::run(dash_args),
     }
 }
