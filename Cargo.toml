@@ -37,12 +37,13 @@ serde_json = { version = "1", optional = true }
 sha2 = "0.10"
 thiserror = "2"
 tokio = { version = "1", features = [
-    "macros",
-    "rt-multi-thread",
-    "time",
-    "sync",
-    "net",
+    "fs",
     "io-util",
+    "macros",
+    "net",
+    "rt-multi-thread",
+    "sync",
+    "time",
 ] }
 uuid = "1"
 

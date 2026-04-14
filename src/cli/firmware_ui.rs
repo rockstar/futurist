@@ -256,7 +256,7 @@ async fn flash_task(
     esp_top_path: Option<String>,
 ) {
     let blob_data = if let Some(ref p) = blob_path {
-        match std::fs::read(p) {
+        match tokio::fs::read(p).await {
             Ok(d) => Some(d),
             Err(e) => {
                 state.lock().await.flash_status = Some(FlashProgress::Failed(format!(
@@ -270,7 +270,7 @@ async fn flash_task(
     };
 
     let esp_data = if let Some(ref p) = esp_top_path {
-        match std::fs::read(p) {
+        match tokio::fs::read(p).await {
             Ok(d) => Some(d),
             Err(e) => {
                 state.lock().await.flash_status = Some(FlashProgress::Failed(format!(
