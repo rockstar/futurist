@@ -1,6 +1,8 @@
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
 use std::time::Duration;
+
+use tokio::sync::Mutex;
 
 use crate::protocol;
 use crate::telemetry::{self, DecodedTelemetry};
@@ -75,7 +77,7 @@ async fn ble_task(state: Arc<Mutex<SharedState>>, vin: &str, sold_on: &str, scan
     loop {
         // Reset telemetry for a fresh connection.
         {
-            let mut s = state.lock().unwrap();
+            let mut s = state.lock().await;
             s.telemetry = DecodedTelemetry::default();
             s.connected = false;
             s.status_msg = format!("scanning... (PIN: {})", pin);
@@ -87,21 +89,21 @@ async fn ble_task(state: Arc<Mutex<SharedState>>, vin: &str, sold_on: &str, scan
             match result {
                 Ok(b) => b,
                 Err(e) => {
-                    state.lock().unwrap().status_msg = format!("{}  — click to retry", e);
+                    state.lock().await.status_msg = format!("{}  — click to retry", e);
                     wait_for_retry(&state).await;
                     continue;
                 }
             }
         };
 
-        state.lock().unwrap().status_msg = "subscribing...".to_string();
+        state.lock().await.status_msg = "subscribing...".to_string();
 
         let mut stream = {
             let result = telemetry::subscribe(&bike).await;
             match result {
                 Ok(s) => s,
                 Err(e) => {
-                    state.lock().unwrap().status_msg = format!("{}  — click to retry", e);
+                    state.lock().await.status_msg = format!("{}  — click to retry", e);
                     wait_for_retry(&state).await;
                     continue;
                 }
@@ -109,19 +111,19 @@ async fn ble_task(state: Arc<Mutex<SharedState>>, vin: &str, sold_on: &str, scan
         };
 
         {
-            let mut s = state.lock().unwrap();
+            let mut s = state.lock().await;
             s.status_msg = format!("connected to {}", bike.vin());
             s.connected = true;
         }
 
         while let Some(frame) = stream.next().await {
-            let mut s = state.lock().unwrap();
+            let mut s = state.lock().await;
             s.telemetry.update(&frame);
         }
 
         // Stream ended — bike disconnected.
         {
-            let mut s = state.lock().unwrap();
+            let mut s = state.lock().await;
             s.status_msg = "disconnected  — click to reconnect".to_string();
             s.connected = false;
         }
@@ -132,7 +134,7 @@ async fn ble_task(state: Arc<Mutex<SharedState>>, vin: &str, sold_on: &str, scan
 async fn wait_for_retry(state: &Arc<Mutex<SharedState>>) {
     loop {
         {
-            let s = state.lock().unwrap();
+            let s = state.lock().await;
             if s.retry.swap(false, Ordering::SeqCst) {
                 return;
             }
@@ -147,7 +149,7 @@ struct DashApp {
 
 impl eframe::App for DashApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        let state = self.state.lock().unwrap();
+        let state = self.state.blocking_lock();
 
         egui::TopBottomPanel::top("status_bar").show(ctx, |ui| {
             ui.horizontal(|ui| {

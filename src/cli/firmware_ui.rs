@@ -1,5 +1,7 @@
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
+
+use tokio::sync::Mutex;
 
 use btleplug::api::Peripheral as _;
 
@@ -108,7 +110,7 @@ pub fn run(args: FirmwareArgs) -> anyhow::Result<()> {
         let api_state = Arc::clone(&state);
         let email = initial_email.clone();
         let password = initial_password.clone();
-        api_state.lock().unwrap().update_state = UpdateCheckState::LoggingIn;
+        api_state.blocking_lock().update_state = UpdateCheckState::LoggingIn;
 
         std::thread::spawn(move || {
             let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
@@ -147,18 +149,18 @@ pub fn run(args: FirmwareArgs) -> anyhow::Result<()> {
 
 async fn ble_task(state: Arc<Mutex<SharedState>>, vin: &str, sold_on: &str, scan_timeout: u64) {
     let pin = crate::crypto::generate_pin(vin, sold_on);
-    state.lock().unwrap().status_msg = format!("scanning... (PIN: {})", pin);
+    state.lock().await.status_msg = format!("scanning... (PIN: {})", pin);
 
     let bike =
         match crate::ble::scan_and_connect(vin, sold_on, Duration::from_secs(scan_timeout)).await {
             Ok(b) => b,
             Err(e) => {
-                state.lock().unwrap().status_msg = format!("connection failed: {}", e);
+                state.lock().await.status_msg = format!("connection failed: {}", e);
                 return;
             }
         };
 
-    state.lock().unwrap().status_msg = "reading firmware versions...".to_string();
+    state.lock().await.status_msg = "reading firmware versions...".to_string();
 
     let peripheral = bike.peripheral();
     let versions_char = bike.characteristic(protocol::UUID_VERSIONS);
@@ -214,25 +216,24 @@ async fn ble_task(state: Arc<Mutex<SharedState>>, vin: &str, sold_on: &str, scan
         installed.batt_serial = v.serial;
     }
 
-    let mut s = state.lock().unwrap();
+    let mut s = state.lock().await;
     s.installed = Some(installed);
     s.connected = true;
     s.status_msg = "connected — firmware info loaded".to_string();
 }
 
 async fn api_task(state: Arc<Mutex<SharedState>>, email: &str, password: &str) {
-    state.lock().unwrap().update_state = UpdateCheckState::LoggingIn;
+    state.lock().await.update_state = UpdateCheckState::LoggingIn;
 
     let client = match api::StarkApi::sign_in(email, password).await {
         Ok(c) => c,
         Err(e) => {
-            state.lock().unwrap().update_state =
-                UpdateCheckState::Error(format!("Login failed: {e}"));
+            state.lock().await.update_state = UpdateCheckState::Error(format!("Login failed: {e}"));
             return;
         }
     };
 
-    state.lock().unwrap().update_state = UpdateCheckState::CheckingUpdates;
+    state.lock().await.update_state = UpdateCheckState::CheckingUpdates;
 
     match client.check_for_updates().await {
         Ok(resp) => {
@@ -240,10 +241,10 @@ async fn api_task(state: Arc<Mutex<SharedState>>, email: &str, password: &str) {
                 vin: resp.vin,
                 bike_firmware: resp.firmware.and_then(|f| f.bike_firmware),
             };
-            state.lock().unwrap().update_state = UpdateCheckState::Available(Box::new(available));
+            state.lock().await.update_state = UpdateCheckState::Available(Box::new(available));
         }
         Err(e) => {
-            state.lock().unwrap().update_state =
+            state.lock().await.update_state =
                 UpdateCheckState::Error(format!("Update check failed: {e}"));
         }
     }
@@ -258,7 +259,7 @@ async fn flash_task(
         match std::fs::read(p) {
             Ok(d) => Some(d),
             Err(e) => {
-                state.lock().unwrap().flash_status = Some(FlashProgress::Failed(format!(
+                state.lock().await.flash_status = Some(FlashProgress::Failed(format!(
                     "Failed to read blob file: {e}"
                 )));
                 return;
@@ -272,7 +273,7 @@ async fn flash_task(
         match std::fs::read(p) {
             Ok(d) => Some(d),
             Err(e) => {
-                state.lock().unwrap().flash_status = Some(FlashProgress::Failed(format!(
+                state.lock().await.flash_status = Some(FlashProgress::Failed(format!(
                     "Failed to read ESP-TOP file: {e}"
                 )));
                 return;
@@ -284,12 +285,14 @@ async fn flash_task(
 
     let progress_state = Arc::clone(&state);
     let result = crate::flash::flash(esp_data.as_deref(), blob_data.as_deref(), move |p| {
-        progress_state.lock().unwrap().flash_status = Some(p);
+        if let Ok(mut s) = progress_state.try_lock() {
+            s.flash_status = Some(p);
+        }
     })
     .await;
 
     if let Err(e) = result {
-        state.lock().unwrap().flash_status = Some(FlashProgress::Failed(e.to_string()));
+        state.lock().await.flash_status = Some(FlashProgress::Failed(e.to_string()));
     }
 }
 
@@ -307,7 +310,7 @@ struct FirmwareApp {
 
 impl eframe::App for FirmwareApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        let state = self.state.lock().unwrap();
+        let state = self.state.blocking_lock();
 
         egui::TopBottomPanel::top("status_bar").show(ctx, |ui| {
             ui.horizontal(|ui| {
@@ -347,7 +350,7 @@ impl eframe::App for FirmwareApp {
 
 impl FirmwareApp {
     fn draw_wifi_section(&self, ui: &mut egui::Ui) {
-        let state = self.state.lock().unwrap();
+        let state = self.state.blocking_lock();
 
         ui.heading("Firmware Update Wi-Fi");
         ui.label(
@@ -382,7 +385,7 @@ impl FirmwareApp {
     }
 
     fn draw_installed_section(&self, ui: &mut egui::Ui) {
-        let state = self.state.lock().unwrap();
+        let state = self.state.blocking_lock();
 
         ui.heading("Installed Firmware");
 
@@ -486,7 +489,7 @@ impl FirmwareApp {
         if show_login {
             // Show any previous error.
             {
-                let state = self.state.lock().unwrap();
+                let state = self.state.blocking_lock();
                 if let UpdateCheckState::Error(ref msg) = state.update_state {
                     ui.colored_label(egui::Color32::from_rgb(255, 100, 100), msg);
                     ui.add_space(4.0);
@@ -528,7 +531,7 @@ impl FirmwareApp {
                     let email = self.email_buf.clone();
                     let password = self.password_buf.clone();
 
-                    api_state.lock().unwrap().update_state = UpdateCheckState::LoggingIn;
+                    api_state.blocking_lock().update_state = UpdateCheckState::LoggingIn;
 
                     std::thread::spawn(move || {
                         let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
@@ -539,7 +542,7 @@ impl FirmwareApp {
                 }
             });
         } else {
-            let state = self.state.lock().unwrap();
+            let state = self.state.blocking_lock();
 
             match &state.update_state {
                 UpdateCheckState::LoggingIn => {
@@ -614,7 +617,7 @@ impl FirmwareApp {
         ui.add_space(4.0);
 
         let flash_in_progress = {
-            let state = self.state.lock().unwrap();
+            let state = self.state.blocking_lock();
             state
                 .flash_status
                 .as_ref()
@@ -666,7 +669,7 @@ impl FirmwareApp {
                     Some(self.esp_top_path_buf.clone())
                 };
 
-                flash_state.lock().unwrap().flash_status = Some(FlashProgress::EnteringFlashMenu);
+                flash_state.blocking_lock().flash_status = Some(FlashProgress::EnteringFlashMenu);
 
                 std::thread::spawn(move || {
                     let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
@@ -678,7 +681,7 @@ impl FirmwareApp {
         });
 
         // Show flash progress.
-        let state = self.state.lock().unwrap();
+        let state = self.state.blocking_lock();
         if let Some(ref progress) = state.flash_status {
             ui.add_space(4.0);
             match progress {

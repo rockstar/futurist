@@ -1,5 +1,7 @@
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
+
+use tokio::sync::Mutex;
 
 use btleplug::api::{Characteristic, Peripheral as _, WriteType};
 use futures::StreamExt;
@@ -162,7 +164,7 @@ const TYPE_MISC_CONFIG: u8 = 3;
 async fn ble_task(state: Arc<Mutex<SharedState>>, vin: &str, sold_on: &str, scan_timeout: u64) {
     let pin = crate::crypto::generate_pin(vin, sold_on);
     {
-        let mut s = state.lock().unwrap();
+        let mut s = state.lock().await;
         s.status_msg = format!("scanning... (PIN: {})", pin);
     }
 
@@ -170,7 +172,7 @@ async fn ble_task(state: Arc<Mutex<SharedState>>, vin: &str, sold_on: &str, scan
         match crate::ble::scan_and_connect(vin, sold_on, Duration::from_secs(scan_timeout)).await {
             Ok(b) => b,
             Err(e) => {
-                state.lock().unwrap().status_msg = format!("connection failed: {}", e);
+                state.lock().await.status_msg = format!("connection failed: {}", e);
                 return;
             }
         };
@@ -179,26 +181,26 @@ async fn ble_task(state: Arc<Mutex<SharedState>>, vin: &str, sold_on: &str, scan
     let vcu_config_char = match bike.characteristic(protocol::UUID_VCU_CONFIG) {
         Some(c) => c.clone(),
         None => {
-            state.lock().unwrap().status_msg = "VCU Config characteristic not found".to_string();
+            state.lock().await.status_msg = "VCU Config characteristic not found".to_string();
             return;
         }
     };
 
     if let Err(e) = peripheral.subscribe(&vcu_config_char).await {
-        state.lock().unwrap().status_msg = format!("subscribe failed: {}", e);
+        state.lock().await.status_msg = format!("subscribe failed: {}", e);
         return;
     }
 
     let mut notifications = match peripheral.notifications().await {
         Ok(n) => n,
         Err(e) => {
-            state.lock().unwrap().status_msg = format!("notifications failed: {}", e);
+            state.lock().await.status_msg = format!("notifications failed: {}", e);
             return;
         }
     };
 
     {
-        let mut s = state.lock().unwrap();
+        let mut s = state.lock().await;
         s.status_msg = format!("connected to {}", bike.vin());
         s.connected = true;
     }
@@ -206,12 +208,12 @@ async fn ble_task(state: Arc<Mutex<SharedState>>, vin: &str, sold_on: &str, scan
     // Initial read of all config types.
     read_all_configs(peripheral, &vcu_config_char, &mut notifications, &state).await;
 
-    state.lock().unwrap().status_msg = "connected — all configs loaded".to_string();
+    state.lock().await.status_msg = "connected — all configs loaded".to_string();
 
     // Event loop: wait for UI signals.
     loop {
         let (wants_read, wants_write_maps, wants_write_curves, wants_write_misc) = {
-            let mut s = state.lock().unwrap();
+            let mut s = state.lock().await;
             let r = s.read_requested;
             let wm = s.write_maps_requested;
             let wc = s.write_curves_requested;
@@ -237,7 +239,7 @@ async fn ble_task(state: Arc<Mutex<SharedState>>, vin: &str, sold_on: &str, scan
 
         if wants_read {
             read_all_configs(peripheral, &vcu_config_char, &mut notifications, &state).await;
-            state.lock().unwrap().status_msg = "connected — all configs loaded".to_string();
+            state.lock().await.status_msg = "connected — all configs loaded".to_string();
         }
 
         tokio::time::sleep(Duration::from_millis(50)).await;
@@ -271,7 +273,7 @@ async fn read_all_maps(
     notifications: &mut (impl futures::Stream<Item = btleplug::api::ValueNotification> + Unpin),
     state: &Arc<Mutex<SharedState>>,
 ) {
-    state.lock().unwrap().status_msg = "reading map configs...".to_string();
+    state.lock().await.status_msg = "reading map configs...".to_string();
 
     for slot in 0u8..5 {
         let request = [0x00, TYPE_MAP_CONFIG, slot];
@@ -288,7 +290,7 @@ async fn read_all_maps(
             }
             let torque_raw = i16::from_le_bytes([data[1], data[2]]);
             let response_slot = data[0] as usize;
-            let mut s = state.lock().unwrap();
+            let mut s = state.lock().await;
             if response_slot < s.slots.len() {
                 s.slots[response_slot] = MapSlot {
                     power_hp: (torque_raw as f32 / 1.25) as u8,
@@ -299,7 +301,7 @@ async fn read_all_maps(
         }
     }
 
-    let mut s = state.lock().unwrap();
+    let mut s = state.lock().await;
     s.maps_dirty = false;
     s.write_msg = None;
 }
@@ -310,7 +312,7 @@ async fn read_all_curves(
     notifications: &mut (impl futures::Stream<Item = btleplug::api::ValueNotification> + Unpin),
     state: &Arc<Mutex<SharedState>>,
 ) {
-    state.lock().unwrap().status_msg = "reading throttle curves...".to_string();
+    state.lock().await.status_msg = "reading throttle curves...".to_string();
 
     for idx in 0u8..5 {
         let request = [0x00, TYPE_CURVES_CONFIG, idx];
@@ -324,7 +326,7 @@ async fn read_all_curves(
         if let Some(data) = read_config_response(notifications, TYPE_CURVES_CONFIG).await {
             if data.is_empty() {
                 // Curve 0 (built-in) returns empty.
-                let mut s = state.lock().unwrap();
+                let mut s = state.lock().await;
                 if (idx as usize) < s.curves.len() {
                     s.curves[idx as usize] = CurveData::empty(idx);
                 }
@@ -339,7 +341,7 @@ async fn read_all_curves(
                     torque.push(u16::from_le_bytes([data[off + 1], data[off + 2]]));
                     regen.push(u16::from_le_bytes([data[off + 3], data[off + 4]]));
                 }
-                let mut s = state.lock().unwrap();
+                let mut s = state.lock().await;
                 if curve_index < s.curves.len() {
                     s.curves[curve_index] = CurveData {
                         index: curve_index as u8,
@@ -380,7 +382,7 @@ async fn read_single_config(
     config_type: u8,
     label: &str,
 ) {
-    state.lock().unwrap().status_msg = format!("reading {} config...", label);
+    state.lock().await.status_msg = format!("reading {} config...", label);
 
     let request = [0x00, config_type];
     if peripheral
@@ -391,7 +393,7 @@ async fn read_single_config(
         return;
     }
     if let Some(data) = read_config_response(notifications, config_type).await {
-        let mut s = state.lock().unwrap();
+        let mut s = state.lock().await;
         match config_type {
             TYPE_MISC_CONFIG if data.len() >= 5 => {
                 s.misc = MiscData {
@@ -412,9 +414,9 @@ async fn write_all_maps(
     notifications: &mut (impl futures::Stream<Item = btleplug::api::ValueNotification> + Unpin),
     state: &Arc<Mutex<SharedState>>,
 ) {
-    state.lock().unwrap().status_msg = "writing map configs...".to_string();
+    state.lock().await.status_msg = "writing map configs...".to_string();
 
-    let slots: Vec<MapSlot> = state.lock().unwrap().slots.clone();
+    let slots: Vec<MapSlot> = state.lock().await.slots.clone();
 
     for (i, slot) in slots.iter().enumerate() {
         let torque_raw = (slot.power_hp as f32 * 1.25) as i16;
@@ -437,7 +439,7 @@ async fn write_all_maps(
             .write(char, &request, WriteType::WithResponse)
             .await
         {
-            let mut s = state.lock().unwrap();
+            let mut s = state.lock().await;
             s.write_msg = Some(format!("write failed on slot {}: {}", i, e));
             s.status_msg = "write failed".to_string();
             return;
@@ -446,7 +448,7 @@ async fn write_all_maps(
         let _ = read_config_response(notifications, TYPE_MAP_CONFIG).await;
     }
 
-    let mut s = state.lock().unwrap();
+    let mut s = state.lock().await;
     s.maps_dirty = false;
     s.write_msg = Some("maps written successfully!".to_string());
     s.status_msg = "connected — maps saved".to_string();
@@ -458,9 +460,9 @@ async fn write_all_curves(
     notifications: &mut (impl futures::Stream<Item = btleplug::api::ValueNotification> + Unpin),
     state: &Arc<Mutex<SharedState>>,
 ) {
-    state.lock().unwrap().status_msg = "writing curves...".to_string();
+    state.lock().await.status_msg = "writing curves...".to_string();
 
-    let curves: Vec<CurveData> = state.lock().unwrap().curves.clone();
+    let curves: Vec<CurveData> = state.lock().await.curves.clone();
 
     for curve in &curves {
         // Skip curve 0 (built-in, not writable) and unreadable curves.
@@ -489,7 +491,7 @@ async fn write_all_curves(
             .write(char, &payload, WriteType::WithResponse)
             .await
         {
-            let mut s = state.lock().unwrap();
+            let mut s = state.lock().await;
             s.write_msg = Some(format!("curve {} write failed: {}", curve.index, e));
             s.status_msg = "write failed".to_string();
             return;
@@ -498,7 +500,7 @@ async fn write_all_curves(
         let _ = read_config_response(notifications, TYPE_CURVES_CONFIG).await;
     }
 
-    let mut s = state.lock().unwrap();
+    let mut s = state.lock().await;
     s.curves_dirty = false;
     s.write_msg = Some("curves written successfully!".to_string());
     s.status_msg = "connected — curves saved".to_string();
@@ -510,9 +512,9 @@ async fn write_misc(
     notifications: &mut (impl futures::Stream<Item = btleplug::api::ValueNotification> + Unpin),
     state: &Arc<Mutex<SharedState>>,
 ) {
-    state.lock().unwrap().status_msg = "writing misc config...".to_string();
+    state.lock().await.status_msg = "writing misc config...".to_string();
 
-    let misc = state.lock().unwrap().misc.clone();
+    let misc = state.lock().await.misc.clone();
 
     let timeout_bytes = misc.inactive_timeout.to_le_bytes();
     let power_off_bytes = misc.auto_power_off.to_le_bytes();
@@ -532,7 +534,7 @@ async fn write_misc(
         .write(char, &request, WriteType::WithResponse)
         .await
     {
-        let mut s = state.lock().unwrap();
+        let mut s = state.lock().await;
         s.write_msg = Some(format!("misc write failed: {}", e));
         s.status_msg = "write failed".to_string();
         return;
@@ -540,7 +542,7 @@ async fn write_misc(
 
     let _ = read_config_response(notifications, TYPE_MISC_CONFIG).await;
 
-    let mut s = state.lock().unwrap();
+    let mut s = state.lock().await;
     s.misc_dirty = false;
     s.write_msg = Some("misc config saved!".to_string());
     s.status_msg = "connected — misc saved".to_string();
@@ -557,7 +559,7 @@ struct ConfigApp {
 
 impl eframe::App for ConfigApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.blocking_lock();
 
         // Status bar
         egui::TopBottomPanel::top("status_bar").show(ctx, |ui| {
