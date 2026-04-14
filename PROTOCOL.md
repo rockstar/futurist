@@ -1023,13 +1023,149 @@ after service discovery and adapt accordingly.
 
 ## Wi-Fi Firmware Flashing
 
-The bike also has a Wi-Fi access point for firmware updates. This is a
-separate transport from BLE.
+> **Status:** This section documents the protocol as understood from the
+> official app's source code.  It has **not been tested against a real bike**
+> because firmware binaries are gated behind Stark's update API, which
+> requires an authenticated account with a registered vehicle.  Proceed with
+> caution — incorrect flash operations could brick the bike's ECU.
 
-- **SSID format:** `VARG-<VIN>` (e.g. `VARG-UDUMX1AB2CD012345`)
-- **Purpose:** Firmware binary transfer to the ESP-based module on the bike
-- **Operations:** Binary upload, console commands, programming sequence
+The bike exposes a Wi-Fi access point during firmware update mode.  Flashing
+happens over raw TCP sockets, completely independent of BLE.
 
-The Wi-Fi flashing protocol has not been decoded beyond identifying its
-existence. It may serve as an emergency recovery path if BLE access is ever
-bricked.
+### Wi-Fi Access Point
+
+| Field    | Value                                                  |
+|----------|--------------------------------------------------------|
+| SSID     | `VARG-<VIN>` (e.g. `VARG-UDUMX1AB2CD012345`)          |
+| Password | First 16 chars of uppercase hex SHA-256(`VIN-SOLDDATE`) |
+| Bike IP  | `192.168.167.1`                                        |
+
+The password derivation uses the same `SHA-256("VIN-SOLDDATE")` as the BLE
+PIN, but takes the first 16 characters of the uppercase hex digest instead
+of extracting digit-by-digit.
+
+### TCP Ports
+
+| Port | Name       | Purpose                            |
+|------|------------|------------------------------------|
+|    7 | Console    | Text commands (flash menu control) |
+|  777 | Blob       | Firmware blob transfer (`.fwb`)    |
+|  877 | ESP-TOP    | ESP32 top firmware binary (`.bin`) |
+
+### Console Commands (Port 7)
+
+Each command is sent as a newline-terminated ASCII string on a fresh TCP
+connection.
+
+| Command         | Description                                |
+|-----------------|--------------------------------------------|
+| `a`             | Enter flash menu                           |
+| `x`             | Exit flash menu                            |
+| `reload-blob`   | Reload firmware blob after transfer        |
+| `download-stop` | Abort an in-progress download              |
+
+### Flash Sequence
+
+The full firmware flash sequence, as implemented by the official app's
+`BikeWifiFlashManager`:
+
+1. **Connect** to the bike's Wi-Fi AP from the host machine.
+2. **Enter flash menu** — send `"a\n"` on port 7 (console).
+3. **Send ESP-TOP binary** (if available):
+   - Open TCP connection to port 877.
+   - Write the entire `vcu-lfs-top.bin` binary.
+   - Close the connection.
+   - Wait **20 seconds** for the ESP to reboot.
+4. **Transfer firmware blob** (if available):
+   - Pad the `.fwb` file to a **4096-byte boundary** by filling the
+     remainder with `0xFF`.
+   - Open TCP connection to port 777.
+   - Write the padded blob.
+   - Close the connection.
+   - Send `"reload-blob\n"` on port 7 to apply.
+5. **Exit flash menu** — send `"x\n"` on port 7.
+
+Steps 3 and 4 are independently optional — you can flash just the ESP-TOP,
+just the blob, or both.
+
+### Firmware Files
+
+The official app bundles two firmware assets:
+
+| File                             | Port | Description              |
+|----------------------------------|------|--------------------------|
+| `vcu-lfs-top.bin`                |  877 | ESP32 top firmware       |
+| `varg-isenc-0x00010800_mx.fwb`   |  777 | Encrypted firmware blob  |
+
+### Timeouts
+
+These match the values from the official app:
+
+| Operation              | Timeout  |
+|------------------------|----------|
+| Console socket         | 10 s     |
+| ESP-TOP send           | 20 s     |
+| ESP reboot wait        | 20 s     |
+| Blob transfer socket   | 30 s     |
+| BLE reconnect after    | 120 s    |
+
+### Firmware Discovery API
+
+The official app checks for available firmware via Stark's cloud API.
+
+**Endpoint:** `GET https://api.starkfuture.com/v2/vehicles/phone`
+
+**Query parameters:**
+
+| Param        | Value     |
+|--------------|-----------|
+| `phone_type` | `android` |
+| `app_version`| `3.0.5`   |
+
+**Authentication:** The `x-auth` header contains an AES-256-CBC encrypted
+device identifier:
+
+1. Plaintext is the device ID string (e.g. `"BLACKVIEW"` for Blackview
+   handsets).
+2. Encrypted with key `K1YeVf4uN5gXLw00zdYLvylYwMu64aVe` (32 bytes,
+   AES-256) using `AES/CBC/PKCS5Padding` with a random 16-byte IV.
+3. Result is hex-encoded as `hex(IV) || hex(ciphertext)`.
+
+A `Authorization: Bearer <JWT>` header from the sign-in flow may also be
+required to identify which vehicle to look up.
+
+**Sign-in endpoint:** `POST https://api.starkfuture.com/v1/user/sign-in`
+with JSON body `{"email": "...", "password": "..."}`.  Returns
+`{"token": "<JWT>", "userProfile": {...}}`.
+
+**Response:** `UpdateResponse` with structure:
+
+```json
+{
+  "vin": "...",
+  "firmware": {
+    "_id": "...",
+    "name": "...",
+    "bikeFirmware": {
+      "name": "...",
+      "type": "...",
+      "buildVersion": "...",
+      "versionNumber": "...",
+      "status": "...",
+      "file": { "key": "...", "bucket": "..." },
+      "url": "https://..."
+    },
+    "phoneFirmware": { ... },
+    "phoneApp": { ... }
+  },
+  "status": "..."
+}
+```
+
+The `url` field in each `UpdateDetail` is a direct download URL (typically
+an S3 pre-signed URL).
+
+> **Limitation:** The update API returns `VEHICLE-ERROR-007` ("Firmware
+> group not found") for vehicles that are not registered to the
+> authenticated account.  Demo units and bikes without a proper account
+> association cannot check for updates through this endpoint.

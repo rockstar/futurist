@@ -64,6 +64,21 @@ pub fn pin_to_passkey(pin: &str) -> u32 {
     pin.parse().unwrap_or(0)
 }
 
+/// Derive the Wi-Fi password for the bike's firmware update AP.
+///
+/// The SSID is `VARG-<VIN>`. The password is the first 16 characters of
+/// the uppercase hex SHA-256 of `"VIN-SOLDDATE"`.
+pub fn wifi_password(vin: &str, sold_on: &str) -> String {
+    let h = sha256_vin_date(vin, sold_on);
+    let hex: String = h.iter().map(|b| format!("{:02X}", b)).collect();
+    hex[..16].to_string()
+}
+
+/// The Wi-Fi SSID the bike broadcasts during firmware updates.
+pub fn wifi_ssid(vin: &str) -> String {
+    format!("VARG-{}", vin)
+}
+
 /// Derive the 16-byte intermediate key `K` from (VIN, sold_on) using the
 /// V2 lookup tables.
 ///

@@ -25,5 +25,8 @@ async fn main() -> anyhow::Result<()> {
 
         #[cfg(feature = "dash")]
         futurist::cli::Command::Dash(dash_args) => futurist::cli::dash::run(dash_args),
+
+        #[cfg(feature = "firmware")]
+        futurist::cli::Command::Firmware(args) => futurist::cli::firmware_ui::run(args),
     }
 }

@@ -6,16 +6,27 @@ edition = "2024"
 [features]
 default = ["dash"]
 dash = ["dep:eframe", "dep:egui"]
+# NOTE: The firmware feature is currently untested/unproven. Stark's firmware
+# update API requires a registered vehicle, and the Wi-Fi flash protocol has
+# not been exercised against a real bike yet because firmware binaries are
+# gated behind an authenticated account with a registered vehicle.
+firmware = ["dash", "dep:aes", "dep:cbc", "dep:getrandom", "dep:reqwest", "dep:serde", "dep:serde_json"]
 
 [dependencies]
+aes = { version = "0.8", optional = true }
 anyhow = "1"
 btleplug = "0.11"
+cbc = { version = "0.1", features = ["alloc"], optional = true }
 clap = { version = "4", features = ["derive", "env"] }
 eframe = { version = "0.31", optional = true }
 egui = { version = "0.31", optional = true }
 futures = "0.3"
+getrandom = { version = "0.3", optional = true }
 hex = "0.4"
+reqwest = { version = "0.12", features = ["json"], optional = true }
+serde = { version = "1", features = ["derive"], optional = true }
+serde_json = { version = "1", optional = true }
 sha2 = "0.10"
 thiserror = "2"
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "sync"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "sync", "net", "io-util"] }
 uuid = "1"

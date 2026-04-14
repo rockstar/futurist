@@ -6,6 +6,9 @@ pub mod dump;
 #[cfg(feature = "dash")]
 pub mod dash;
 
+#[cfg(feature = "firmware")]
+pub mod firmware_ui;
+
 #[derive(clap::Subcommand)]
 pub enum Command {
     /// Read bike configuration (power modes, etc.) via CLI.
@@ -21,4 +24,8 @@ pub enum Command {
     /// Live telemetry dashboard.
     #[cfg(feature = "dash")]
     Dash(dash::DashArgs),
+
+    /// Firmware version info and update management.
+    #[cfg(feature = "firmware")]
+    Firmware(firmware_ui::FirmwareArgs),
 }
